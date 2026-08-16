@@ -6,8 +6,6 @@ Spacecraft generate large volumes of telemetry. Operators need to identify abnor
 
 MissionGuard converts raw spacecraft telemetry into prioritized, evidence-backed incidents and an AI-generated investigation briefing.
 
-The system is intended as a hackathon prototype and research-oriented decision-support tool, not an operationally certified flight system.
-
 ## Target users
 
 Primary:
