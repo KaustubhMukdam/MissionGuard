@@ -153,3 +153,76 @@ The ESA-ADB repo provides preprocessed data via TimeEval DatasetManager. The `da
 | 84_months | 7,364,161 | 7,364,161 | 87 | 1.9% |
 
 The 3_months subset (262K train rows, 87 channels) is the lightweight development target. Need to use TimeEval DatasetManager to download/access.
+
+## Phase 1: Data Pipeline Implementation (2026-08-17)
+
+### Reusable Components Created
+
+**`src/missionguard/data/loaders.py`**
+- `load_segments(path)` — Load raw telemetry with timestamp parsing and validation
+- `load_dataset(path)` — Load segment features with validation
+- `get_train_test_split(segments, dataset)` — Split using provided train/test column
+- `load_opssat_ad(data_dir)` — Convenience loader for both files
+- `get_temporal_train_test_split(df, test_ratio)` — Temporal split (no future leakage)
+
+**`src/missionguard/data/schema.py`**
+- `SegmentsSchema` / `DatasetSchema` — Dataclass schemas with required columns and dtypes
+- `validate_segments_df(df)` — Returns `{"valid": bool, "errors": [], "warnings": []}`
+- `validate_dataset_df(df)` — Same pattern for segment features
+- Checks: required columns, dtypes, missing values, binary anomaly/train, positive segment IDs, sampling rates
+
+**`src/missionguard/preprocessing/transforms.py`**
+- `StandardScalerWrapper` / `RobustScalerWrapper` — Wrappers with feature names, fit/transform, save/load
+- `fit_scaler(train_df, feature_names, scaler_type)` — Fit on train only
+- `transform_features(df, scaler, feature_names)` — Apply fitted scaler
+- `prepare_features_target(dataset_df, feature_names)` — Extract X, y
+- `get_feature_names(df)` — Auto-detect feature columns (excludes metadata)
+
+**`src/missionguard/preprocessing/time_series.py`**
+- `sort_by_segment_time(df)` — Critical for OPSSAT-AD (segments concatenated)
+- `extract_segment_windows(df, segment_id)` — Single segment time series
+- `compute_rolling_features(series, windows, features)` — Rolling mean, std, min, max, skew, kurt
+- `compute_differencing_features(series, lags)` — First and second order differences
+- `detect_gaps(df, max_gap_seconds)` — Identify sampling irregularities
+- `align_channels_temporally(df)` — Multi-channel alignment (requires time overlap)
+
+**`src/missionguard/utils/config.py`**
+- `OPSSAT_AD_CONFIG` — Complete dataset config with schemas, statistics, limitations
+- `ESA_ADB_CONFIG` — Subset configurations for Mission 1
+- `MODEL_CONFIG`, `EVAL_CONFIG` — Centralized hyperparameters
+
+### Pipeline Usage Example
+
+```python
+from missionguard.data import load_opssat_ad, get_train_test_split
+from missionguard.preprocessing import fit_scaler, transform_features, get_feature_names
+
+# Load and validate
+segments, dataset = load_opssat_ad("data/raw/opssat-ad")
+
+# Split (using provided segment-based split)
+train_seg, test_seg, train_ds, test_ds = get_train_test_split(segments, dataset)
+
+# Or temporal split for raw time series
+train_seg, test_seg = get_temporal_train_test_split(segments, test_ratio=0.25)
+
+# Scale features (fit on train only!)
+feature_names = get_feature_names(train_ds)
+scaler = fit_scaler(train_ds, feature_names, scaler_type="robust")
+train_scaled = transform_features(train_ds, scaler, feature_names)
+test_scaled = transform_features(test_ds, scaler, feature_names)
+
+# Prepare for modeling
+X_train, y_train = prepare_features_target(train_scaled, feature_names)
+X_test, y_test = prepare_features_target(test_scaled, feature_names)
+```
+
+### Tests
+
+31 unit tests in `tests/test_data.py` and `tests/test_preprocessing.py`:
+- Schema validation (missing columns, wrong dtypes, invalid values, missing data)
+- Loader integration (real OPSSAT-AD data)
+- Train/test splits (segment-based and temporal)
+- Scaler fit/transform/persistence (StandardScaler, RobustScaler)
+- Time series utilities (sorting, windowing, rolling features, differencing, gap detection)
+- All tests pass

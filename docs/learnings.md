@@ -83,3 +83,58 @@ Group by segment first, then analyze within-segment time series. For global temp
 ### What I'd do differently
 
 Start with segment-level features (dataset.csv) for baseline experiments — cleaner, no timestamp issues, matches benchmark protocol. Use raw time series only for visualization and temporal incident aggregation later.
+
+---
+
+## 2026-08-17 — Phase 1: Data Pipeline
+
+### What I learned
+
+**Reusable data pipeline is the foundation:**
+- Created `src/missionguard/data/` for loading and validation
+- Created `src/missionguard/preprocessing/` for transforms and time series utilities
+- Schema validation catches data issues early (missing columns, wrong dtypes, invalid values, missing data)
+- Train/test split must respect temporal ordering for time series — added `get_temporal_train_test_split` alongside provided segment-based split
+- OPSSAT-AD timestamps are NOT globally monotonic — must sort by segment then timestamp before any temporal analysis
+
+**Scaling strategy:**
+- RobustScaler preferred over StandardScaler for telemetry (outliers common)
+- Scaler must be fitted ONLY on training data, then applied to test (no leakage)
+- Implemented `StandardScalerWrapper` and `RobustScalerWrapper` with persistence (save/load via joblib)
+- Feature names tracked explicitly to avoid column ordering issues
+
+**Time series handling:**
+- `sort_by_segment_time` essential for OPSSAT-AD (segments concatenated, not interleaved)
+- `extract_segment_windows` for per-segment analysis
+- `compute_rolling_features` and `compute_differencing_features` for feature engineering on raw series
+- `detect_gaps` identifies sampling irregularities
+- `align_channels_temporally` only works when channels overlap in time (not for OPSSAT-AD)
+
+**Testing:**
+- 31 unit tests covering schema validation, loaders, temporal splits, scalers, time series utils
+- Tests use synthetic data for unit tests, real OPSSAT-AD for integration tests
+- All tests pass, CI-ready
+
+### Code snippet that clicked
+
+```python
+# Fit scaler on TRAIN only, transform both train and test
+scaler = fit_scaler(train_df, feature_names, scaler_type="robust")
+train_scaled = transform_features(train_df, scaler, feature_names)
+test_scaled = transform_features(test_df, scaler, feature_names)  # Same scaler!
+
+# Temporal split for time series (no future leakage)
+train_df, test_df = get_temporal_train_test_split(segments_df, test_ratio=0.25)
+```
+
+### What confused me today
+
+The validation functions failed when test data had missing columns — fixed by checking only present columns for null validation, while still reporting missing required columns as errors.
+
+### How I solved it
+
+Modified `validate_segments_df` and `validate_dataset_df` to check nulls only on columns that exist in the DataFrame, while still flagging missing required columns as schema errors.
+
+### What I'd do differently
+
+Add a configuration-driven approach for feature selection earlier. The 18 segment features in OPSSAT-AD are pre-computed; for ESA-ADB we'll need to compute similar features from raw multivariate data.
