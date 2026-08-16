@@ -2,8 +2,6 @@
 
 ## In progress
 
-- [ ] Implement statistical baseline
-- [ ] Implement Isolation Forest baseline
 - [ ] Define anomaly-event conversion rules
 - [ ] Define temporal incident aggregation
 - [ ] Define priority-score formula
@@ -34,6 +32,15 @@
 - [x] Create preprocessing transforms (`src/missionguard/preprocessing/transforms.py`)
 - [x] Create time series utilities (`src/missionguard/preprocessing/time_series.py`)
 - [x] Add unit tests for data loading, validation, preprocessing (31 tests passing)
+- [x] Implement statistical baseline (MAD, Z-score, Rolling variants)
+- [x] Implement Isolation Forest baseline
+- [x] Create base anomaly detector class with threshold tuning
+- [x] Create score-to-event conversion (`src/missionguard/detection/events.py`)
+- [x] Create event merging and filtering
+- [x] Create threshold selection and evaluation (`src/missionguard/detection/thresholding.py`)
+- [x] Create evaluation metrics (`src/missionguard/evaluation/metrics.py`)
+- [x] Create experiment runner (`src/missionguard/evaluation/experiment.py`)
+- [x] Add unit tests for models, detection, evaluation (85 tests passing)
 
 ## Blocked
 

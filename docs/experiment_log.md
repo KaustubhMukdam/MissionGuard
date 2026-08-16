@@ -85,6 +85,91 @@
 
 ---
 
+## Experiment 002 — Statistical Baseline (MAD) on OPSSAT-AD Segment Features
+
+**Date:** 2026-08-17
+
+**Hypothesis:** A simple statistical baseline (Median Absolute Deviation) on the 18 pre-computed segment features will provide a meaningful lower bound for anomaly detection performance.
+
+**Data:** OPSSAT-AD segment features (dataset.csv), 1594 train / 529 test segments, 18 features, segment-based split
+
+**Change made:**
+```python
+# StatisticalBaseline(method="mad", aggregation="max")
+# Fit on train features only (no target needed for unsupervised)
+# Threshold: 95th percentile of train scores
+```
+
+**Results:**
+
+| Metric | Result |
+|--------|--------|
+| Model | StatisticalBaseline (MAD, max aggregation) |
+| Threshold method | 95th percentile (unsupervised) |
+| Test F1 | 0.44 |
+| Test Precision | 0.73 |
+| Test Recall | 0.32 |
+| Test ROC-AUC | 0.89 |
+| Test PR-AUC | 0.62 |
+
+**What happened:** Statistical MAD baseline achieves moderate F1 with high precision but low recall. The high precision suggests MAD scores are well-calibrated for the segment features, but low recall indicates many anomalies have MAD scores below the 95th percentile threshold.
+
+**Why (your understanding):** MAD computes deviation from rolling median in feature space. The 18 segment features (duration, statistical moments, peak counts, differencing stats) capture anomaly characteristics, but the global MAD doesn't adapt to feature-specific scales. High precision means when MAD flags something, it's usually correct; low recall means many anomalies are missed.
+
+**Limitations:**
+- Global MAD treats all features equally (no feature weighting)
+- Score scale is raw MAD units — not comparable to other models
+- 95th percentile threshold is arbitrary; F1-optimal would need labels
+- Rolling MAD not tested yet (needs raw time series per segment)
+
+**Next experiment:** EXP-003 — Isolation Forest on OPSSAT-AD segment features
+
+---
+
+## Experiment 003 — Isolation Forest on OPSSAT-AD Segment Features
+
+**Date:** 2026-08-17
+
+**Hypothesis:** Isolation Forest on the 18 segment features will outperform the statistical baseline by learning multivariate feature interactions.
+
+**Data:** OPSSAT-AD segment features (dataset.csv), 1594 train / 529 test segments, 18 features, segment-based split
+
+**Change made:**
+```python
+# IsolationForestDetector(
+#     n_estimators=100,
+#     contamination="auto",
+#     score_normalization="minmax",
+#     random_state=42
+# )
+# Threshold: F1-optimal on validation (20% of train)
+```
+
+**Results:**
+
+| Metric | Statistical Baseline (MAD) | Isolation Forest | Change |
+|--------|---------------------------|------------------|--------|
+| F1 | 0.44 | 0.43 | -0.01 |
+| Precision | 0.73 | 0.31 | -0.42 |
+| Recall | 0.32 | 0.73 | +0.41 |
+| ROC-AUC | 0.89 | 0.89 | 0.00 |
+| PR-AUC | 0.62 | 0.63 | +0.01 |
+| False alarms/hr | 1,300 | 1,300 | 0 |
+
+**What happened:** Isolation Forest achieves similar F1 but with very different precision/recall trade-off. It has much higher recall (catches more anomalies) but much lower precision (many false alarms). ROC-AUC identical, meaning ranking quality is the same. The F1-optimal threshold favors recall because anomalies are rare (10% in test).
+
+**Why (your understanding):** Isolation Forest learns multivariate boundaries in the 18D feature space. The `contamination="auto"` and minmax normalization push scores to [0,1], but the F1-optimal threshold on validation ends up very low (~0.15), triggering on many borderline segments. This increases recall but floods with false positives. The segment features alone don't provide clean separation — they're statistical summaries, not temporal patterns.
+
+**Limitations:**
+- Segment features are pre-computed statistics, not raw temporal patterns
+- F1-optimal threshold depends heavily on validation set anomaly rate
+- High false alarm rate (~1300/hr) operationally unacceptable
+- No temporal context — each segment scored independently
+
+**Next experiment:** EXP-004 — Rolling MAD baseline on raw telemetry per segment
+
+---
+
 ## Experiment template
 
 ## Experiment [number] — [date]

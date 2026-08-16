@@ -129,7 +129,7 @@ train_df, test_df = get_temporal_train_test_split(segments_df, test_ratio=0.25)
 
 ### What confused me today
 
-The validation functions failed when test data had missing columns — fixed by checking only present columns for null validation, while still reporting missing required columns as errors.
+The validation functions failed when test data had missing columns — fixed by checking only present columns for null validation, while still reporting missing required columns as schema errors.
 
 ### How I solved it
 
@@ -138,3 +138,94 @@ Modified `validate_segments_df` and `validate_dataset_df` to check nulls only on
 ### What I'd do differently
 
 Add a configuration-driven approach for feature selection earlier. The 18 segment features in OPSSAT-AD are pre-computed; for ESA-ADB we'll need to compute similar features from raw multivariate data.
+
+---
+
+## 2026-08-17 — Phase 2: Baseline Anomaly Detection
+
+### What I learned
+
+**Statistical baselines first:**
+- Implemented `StatisticalBaseline` (global MAD/Z-score), `RollingMADBaseline`, `RollingZScoreBaseline`
+- Global statistical baselines on segment features are fast but don't capture temporal dynamics
+- Rolling baselines need careful window/min_periods tuning for telemetry sampling rates
+- MAD is more robust than Z-score for telemetry with outliers
+
+**Isolation Forest as lightweight ML baseline:**
+- `IsolationForestDetector` with 18 segment features trains in <1s
+- Score normalization (minmax, percentile) maps raw scores to [0,1] for thresholding
+- `contamination="auto"` works well; explicit values (0.01-0.1) give more control
+- Feature name tracking prevents column mismatch errors
+
+**Base detector pattern:**
+- Abstract `BaseAnomalyDetector` enforces fit/score/predict interface
+- Threshold tuning on validation set (F1-optimal or percentile-based)
+- Persistence via joblib (model + threshold + feature names)
+- Prevents leakage by design (fit on train, threshold on val, evaluate on test)
+
+**Score-to-event conversion:**
+- `scores_to_events` converts continuous scores → discrete events with timestamps, duration, max/mean scores
+- `min_duration` filters single-sample spikes
+- `merge_events` combines nearby events within configurable gap (default 5 min)
+- `filter_events` by duration, max_score, mean_score
+- Events carry segment IDs for traceability
+
+**Threshold selection:**
+- Percentile-based (simple, unsupervised)
+- F1-optimal on validation (supervised, needs labels)
+- Precision@Recall / Recall@Precision for operational targets
+- Sweep evaluation for threshold visualization
+
+**Evaluation metrics:**
+- Point-level: Precision, Recall, F1, Accuracy, Specificity, ROC-AUC, PR-AUC
+- Operational: False alarms/hour, False alarm rate, MTBFA, Detection delay
+- Bootstrap confidence intervals for metric uncertainty
+- Threshold-independent metrics (ROC-AUC, PR-AUC) reported alongside threshold-dependent
+
+**OPSSAT-AD baseline results (Isolation Forest):**
+- F1: ~0.43, Precision: ~0.31, Recall: ~0.73
+- High recall but low precision — expected for segment-features without temporal context
+- False alarms: ~1300/hour (high due to many segments)
+- Detection delay: ~0.1s (segments already grouped)
+- Segment-features alone insufficient for clean separation — needs temporal context
+
+### Code snippet that clicked
+
+```python
+# Complete baseline pipeline
+from missionguard.data import load_opssat_ad, get_train_test_split
+from missionguard.preprocessing import fit_scaler, transform_features, get_feature_names, prepare_features_target
+from missionguard.models import IsolationForestDetector
+from missionguard.evaluation import compute_all_metrics
+
+segments, dataset = load_opssat_ad("data/raw/opssat-ad")
+train_seg, test_seg, train_ds, test_ds = get_train_test_split(segments, dataset)
+
+feature_names = get_feature_names(train_ds)
+scaler = fit_scaler(train_ds, feature_names, scaler_type="robust")
+train_scaled = transform_features(train_ds, scaler, feature_names)
+test_scaled = transform_features(test_ds, scaler, feature_names)
+
+X_train, y_train = prepare_features_target(train_scaled, feature_names)
+X_test, y_test = prepare_features_target(test_scaled, feature_names)
+
+detector = IsolationForestDetector(n_estimators=100, score_normalization="minmax", random_state=42)
+detector.fit(X_train)
+detector.tune_threshold(X_train, y_train, metric="f1")
+test_scores = detector.score(X_test)
+
+metrics = compute_all_metrics(y_test.values, test_scores, threshold=detector.threshold)
+print(f"F1: {metrics.f1:.3f}, Precision: {metrics.precision:.3f}, Recall: {metrics.recall:.3f}")
+```
+
+### What confused me today
+
+Statistical baseline (MAD) threshold was absurdly high (2e10) — realized MAD scores on segment features have very different scale than Isolation Forest scores. Need score normalization or percentile thresholding for statistical baselines too.
+
+### How I solved it
+
+Use `set_threshold_from_scores(scores, method="percentile", value=95)` for statistical baselines instead of trying to tune on labels. The score scales are not comparable across model types.
+
+### What I'd do differently
+
+Add score normalization to statistical baselines too, or enforce a common score interface. The current `StatisticalBaseline` returns raw MAD/Z-score values which aren't directly comparable to Isolation Forest's [0,1] normalized scores.
