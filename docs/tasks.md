@@ -2,7 +2,6 @@
 
 ## In progress
 
-- [ ] Create deterministic train/validation/test strategy
 - [ ] Implement statistical baseline
 - [ ] Implement Isolation Forest baseline
 - [ ] Define anomaly-event conversion rules
@@ -29,6 +28,12 @@
 - [x] Confirm labels/anomaly event structure
 - [x] Produce the first 5+ telemetry plots
 - [x] Record data quality findings in `data_doc.md`
+- [x] Create deterministic train/validation/test strategy
+- [x] Create reusable data loading (`src/missionguard/data/loaders.py`)
+- [x] Create schema validation (`src/missionguard/data/schema.py`)
+- [x] Create preprocessing transforms (`src/missionguard/preprocessing/transforms.py`)
+- [x] Create time series utilities (`src/missionguard/preprocessing/time_series.py`)
+- [x] Add unit tests for data loading, validation, preprocessing (31 tests passing)
 
 ## Blocked
 

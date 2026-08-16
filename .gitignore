@@ -73,3 +73,6 @@ docs/step-by-step.md
 
 # Frontend design
 design
+
+# Tests
+tests/test_watsonx_ai_endpoint.py
