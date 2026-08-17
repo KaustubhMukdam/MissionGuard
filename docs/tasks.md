@@ -41,13 +41,26 @@
 - [x] Create evaluation metrics (`src/missionguard/evaluation/metrics.py`)
 - [x] Create experiment runner (`src/missionguard/evaluation/experiment.py`)
 - [x] Add unit tests for models, detection, evaluation (85 tests passing)
+- [x] Phase 3a: Rolling baselines on raw telemetry (OPSSAT-AD)
+  - Rolling MAD/Z-Score baselines on 18 rolling features (windows: 10s, 30s, 60s)
+  - Event detection from rolling scores
+  - Temporal incident aggregation (merge_events with configurable gap)
+- [x] Phase 3b: Isolation Forest Production Baseline + Extended Experiments
+  - Production model saved: `models/isolation_forest_prod_v1.joblib`
+  - Scaler saved: `models/robust_scaler_prod_v1.joblib`
+  - Config saved: `models/prod_config_v1.json`
+  - F1=0.4365 (all 18 features) → **F1=0.656 (peak-based 3 features only!)**
+  - Contamination sweep: stable across 0.01-0.2
+  - N_estimators: stable 50-500, peak at 300
+  - Peak-based features (3): n_peaks, smooth10_n_peaks, smooth20_n_peaks
+  - Normalization method doesn't matter with F1-optimal threshold
+  - Bootstrap 95% CI: F1 ∈ [0.390, 0.480]
 
 ## Blocked
 
-- [ ] Exact model choice — blocked until baseline experiments are complete
 - [ ] Exact Granite model/API — blocked until account access and free-tier availability are verified
 - [ ] Exact persistence design — blocked until the need for incident history is confirmed
-- [ ] ESA-ADB Mission 1 3-month subset download — blocked on TimeEval DatasetManager access
+- [ ] ESA-ADB Mission 1 3-month subset download — blocked on TimeEval DatasetManager access (not in GitHub, requires 3.7GB download + hours preprocessing)
 
 ## Ideas / backlog
 

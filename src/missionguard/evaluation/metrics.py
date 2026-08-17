@@ -104,6 +104,14 @@ def compute_all_metrics(
     Returns:
         MetricsResult with all metrics
     """
+    # Handle NaN in scores - drop corresponding samples
+    valid_mask = ~np.isnan(y_scores)
+    if not valid_mask.all():
+        y_true = y_true[valid_mask]
+        y_scores = y_scores[valid_mask]
+        if len(y_true) == 0:
+            raise ValueError("All scores are NaN")
+    
     # Select threshold if not provided
     if threshold is None:
         threshold = _select_f1_optimal_threshold(y_scores, y_true)
