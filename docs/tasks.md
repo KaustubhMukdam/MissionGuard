@@ -2,12 +2,8 @@
 
 ## In progress
 
-- [ ] Define anomaly-event conversion rules
-- [ ] Define temporal incident aggregation
-- [ ] Define priority-score formula
 - [ ] Build first Incident Autopsy prototype
 - [ ] Evaluate whether LSTM/autoencoder adds value
-- [ ] Build evidence packet schema
 - [ ] Integrate Granite/watsonx only after the analytical pipeline works
 - [ ] Create Streamlit dashboard
 - [ ] Add unit tests for non-trivial functions
@@ -55,6 +51,13 @@
   - Peak-based features (3): n_peaks, smooth10_n_peaks, smooth20_n_peaks
   - Normalization method doesn't matter with F1-optimal threshold
   - Bootstrap 95% CI: F1 ∈ [0.390, 0.480]
+- [x] Phase 4: Incident Engine (Priority scoring, evidence packets, Incident Autopsy)
+  - Temporal incident aggregation (`src/missionguard/incidents/aggregation.py`)
+  - Priority scoring with configurable weights (`src/missionguard/incidents/priority.py`)
+  - Evidence packet schema (`src/missionguard/incidents/evidence.py`)
+  - LLM briefing template for grounded briefings
+  - Unit tests for aggregation, priority, evidence (20 tests passing)
+  - Total tests: 105 passing
 
 ## Blocked
 
