@@ -170,6 +170,128 @@
 
 ---
 
+## Experiment 004 — Rolling MAD/Z-Score Baselines on Raw Telemetry
+
+**Date:** 2026-08-17
+
+**Hypothesis:** Rolling statistical baselines on raw telemetry per segment will capture temporal dynamics better than static segment features.
+
+**Data:** OPSSAT-AD raw telemetry (segments.csv), 303K rows, 2123 segments, 9 channels, segment-based split (220K train / 77K test rows)
+
+**Change made:**
+```python
+# Compute rolling features per segment (windows: 10s, 30s, 60s; features: mean, std, min, max, skew, kurt)
+# RollingMADBaseline / RollingZScoreBaseline on 18 rolling features
+# Threshold: 95th percentile on validation
+```
+
+**Results:**
+
+| Model | Window | F1 | Precision | Recall | Threshold |
+|-------|--------|-----|-----------|--------|-----------|
+| Rolling MAD | 10s | 0.077 | 0.43 | 0.04 | 18.2 |
+| Rolling MAD | 30s | 0.048 | 0.29 | 0.03 | 58.7 |
+| Rolling MAD | 60s | 0.096 | 0.29 | 0.06 | 56.0 |
+| Rolling Z-Score | 10s | 0.071 | 0.44 | 0.04 | 2.7 |
+| Rolling Z-Score | 30s | 0.068 | 0.36 | 0.04 | 3.9 |
+| Rolling Z-Score | 60s | 0.098 | 0.35 | 0.06 | 4.2 |
+
+**What happened:** Rolling baselines on raw telemetry perform WORSE than static segment features (Isolation Forest F1=0.43 vs Rolling MAD F1=0.096). Rolling features have extreme skew/kurt (up to 43,000) from near-constant segments with brief spikes.
+
+**Why (your understanding):** OPSSAT-AD segments are pre-extracted around events. Rolling features computed per-segment, not continuous across time. No multivariate context (1 segment = 1 channel).
+
+**Limitations:** Rolling baselines don't beat static features. Event detection works (9 events → 6 incidents) but single-channel only.
+
+**Next experiment:** EXP-005 — Isolation Forest Production Baseline + Extended Experiments
+
+---
+
+## Experiment 005 — Isolation Forest Production Baseline + Extended Experiments
+
+**Date:** 2026-08-17
+
+**Hypothesis:** Formalize Isolation Forest as production baseline and run extended experiments to optimize performance.
+
+**Data:** OPSSAT-AD segment features (dataset.csv), 1594 train / 529 test segments, 18 features, segment-based split
+
+**Change made:**
+```python
+# Production config: IsolationForestDetector(n_estimators=200, contamination=0.1, score_normalization="minmax", random_state=42)
+# RobustScaler on train, F1-optimal threshold on validation (20% of train)
+# Extended experiments: contamination sweep, n_estimators sweep, feature groups, normalization, bootstrap
+```
+
+**Results — Production Baseline:**
+
+| Metric | Value |
+|--------|-------|
+| F1 | 0.4365 |
+| Precision | 0.299 |
+| Recall | 0.805 |
+| ROC-AUC | 0.636 |
+| PR-AUC | 0.376 |
+| Threshold (F1-optimal) | 0.108 |
+| False alarms/hr | 1,450 |
+| Detection delay | 0.1s |
+
+**Extended Experiments — Key Findings:**
+
+| Experiment | Best Config | F1 | Precision | Recall |
+|------------|-------------|-----|-----------|--------|
+| **Contamination sweep** | All values (0.01-0.2, auto) | **0.437** | 0.30 | 0.81 |
+| **N_estimators** | 300 trees | **0.440** | 0.30 | 0.81 |
+| **Feature groups** | **Peak-based (3 feat)** | **0.656** | **0.78** | **0.57** |
+| **Normalization** | All (minmax/percentile/none) | **0.437** | 0.30 | 0.81 |
+
+**🚀 MAJOR FINDING: Peak-based features (3 features) achieve F1=0.656 — 50% improvement over all 18 features!**
+
+Peak features: `n_peaks`, `smooth10_n_peaks`, `smooth20_n_peaks`
+
+**Other findings:**
+- Contamination parameter has no effect when using F1-optimal threshold (threshold compensates)
+- N_estimators: stable across 50-500, peak at 300
+- Score normalization method doesn't matter with F1-optimal threshold
+- Bootstrap 95% CI for F1: [0.390, 0.480] — stable
+
+**Feature Group Ablation:**
+
+| Group | Features | F1 | Precision | Recall |
+|-------|----------|-----|-----------|--------|
+| Peak-based | n_peaks, smooth10_n_peaks, smooth20_n_peaks | **0.656** | **0.78** | **0.57** |
+| Statistical | mean, var, std, kurtosis, skew | 0.337 | 0.24 | 0.57 |
+| Duration | duration, len, len_weighted, gaps_squared, var_div_duration, var_div_len | 0.361 | 0.25 | 0.66 |
+| Diff-based | diff_peaks, diff2_peaks, diff_var, diff2_var | 0.306 | 0.20 | 0.66 |
+| All 18 | (all) | 0.437 | 0.30 | 0.81 |
+
+**Production Artifacts Saved:**
+- Model: `models/isolation_forest_prod_v1.joblib`
+- Scaler: `models/robust_scaler_prod_v1.joblib`  
+- Config: `models/prod_config_v1.json`
+- All experiment data: `artifacts/phase3b/`
+
+**Production Baseline Pipeline:**
+
+```python
+from missionguard.models import IsolationForestDetector
+from missionguard.preprocessing import RobustScalerWrapper
+
+model = IsolationForestDetector.load("models/isolation_forest_prod_v1.joblib")
+scaler = RobustScalerWrapper.load("models/robust_scaler_prod_v1.joblib")
+
+X_scaled = transform_features(new_segments, scaler, feature_names)
+scores = model.score(X_scaled)
+events = scores_to_events(scores, timestamps, channel, threshold=model.threshold)
+incidents = merge_events(events, max_gap_seconds=300)
+```
+
+**Why (your understanding):** Peak features capture the "spikiness" of anomalies directly. Statistical moments get diluted by long constant portions of segments. F1-optimal threshold compensates for contamination/normalization.
+
+**Limitations:** Still high false alarms (~1450/hr) for operational use. Peak-feature model (F1=0.656) is the new production candidate.
+
+**Next experiment:** EXP-006 — Peak-feature Isolation Forest as final production baseline
+
+---
+
 ## Experiment template
 
 ## Experiment [number] — [date]

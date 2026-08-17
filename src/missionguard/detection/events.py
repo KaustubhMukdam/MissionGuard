@@ -118,7 +118,16 @@ def _create_event(
     # Handle both Series and DatetimeIndex
     event_times = timestamps[start_idx:end_idx+1]
     
-    duration_seconds = (event_times[-1] - event_times[0]).total_seconds()
+    # Use positional indexing for both Series and DatetimeIndex
+    if isinstance(event_times, pd.Series):
+        first_time = event_times.iloc[0]
+        last_time = event_times.iloc[-1]
+    else:
+        # DatetimeIndex supports direct negative indexing
+        first_time = event_times[0]
+        last_time = event_times[-1]
+    
+    duration_seconds = (last_time - first_time).total_seconds()
     if duration_seconds < 0:
         duration_seconds = 0
     
@@ -132,8 +141,8 @@ def _create_event(
         channel=channel,
         start_idx=start_idx,
         end_idx=end_idx,
-        start_time=event_times[0],
-        end_time=event_times[-1],
+        start_time=first_time,
+        end_time=last_time,
         max_score=float(event_scores.max()),
         mean_score=float(event_scores.mean()),
         duration_samples=end_idx - start_idx + 1,
