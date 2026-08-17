@@ -226,3 +226,188 @@ X_test, y_test = prepare_features_target(test_scaled, feature_names)
 - Scaler fit/transform/persistence (StandardScaler, RobustScaler)
 - Time series utilities (sorting, windowing, rolling features, differencing, gap detection)
 - All tests pass
+
+## Phase 4: Incident Engine Data Structures (2026-08-17)
+
+### Anomaly Events (`src/missionguard/detection/events.py`)
+
+**`AnomalyEvent` dataclass** — Represents a contiguous anomaly event detected from scores.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| channel | str | Channel identifier |
+| start_idx | int | Start index in time series |
+| end_idx | int | End index in time series |
+| start_time | pd.Timestamp | Event start timestamp (UTC) |
+| end_time | pd.Timestamp | Event end timestamp (UTC) |
+| max_score | float | Maximum anomaly score in event |
+| mean_score | float | Mean anomaly score in event |
+| duration_samples | int | Number of samples in event |
+| duration_seconds | float | Event duration in seconds |
+| segment_ids | List[int] | Segment IDs covered by event |
+
+**Functions:**
+- `scores_to_events(scores, timestamps, channel, threshold, min_duration, segment_ids)` — Convert continuous scores to discrete events
+- `merge_events(events, max_gap_seconds)` — Merge nearby events within time gap
+- `filter_events(events, min_duration, max_duration, min_max_score, min_mean_score)` — Filter by criteria
+- `events_to_dataframe(events)` — Convert to DataFrame
+- `get_events_per_channel(segments_df, scores, threshold, ...)` — Extract events per channel from scored segments
+
+### Incidents (`src/missionguard/incidents/aggregation.py`)
+
+**`Incident` dataclass** — Aggregated operational incident from multiple anomaly events.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| incident_id | str | Unique identifier (e.g., "INC-0001") |
+| start_time | pd.Timestamp | Incident start (UTC) |
+| end_time | pd.Timestamp | Incident end (UTC) |
+| events | List[AnomalyEvent] | Constituent anomaly events |
+| affected_channels | List[str] | Channels involved |
+| priority_score | float | Overall priority [0, 1] |
+| priority_components | Dict[str, float] | Component breakdown |
+| metadata | Dict | Additional context |
+
+**Computed properties:**
+- `duration_seconds` — Total incident duration
+- `duration_minutes` — Duration in minutes
+- `event_count` — Number of constituent events
+- `max_anomaly_score` — Maximum score across events
+- `mean_anomaly_score` — Mean score across events
+- `channel_count` — Number of affected channels
+
+**Functions:**
+- `aggregate_events_to_incidents(events, max_gap_seconds=300, min_events=1, prefix="INC")` — Temporal grouping
+- `merge_incidents(incidents, max_gap_seconds)` — Merge adjacent incidents
+- `filter_incidents(incidents, min_duration, max_duration, min_priority, ...)` — Filter by criteria
+- `incidents_to_dataframe(incidents)` — Convert to DataFrame
+
+### Priority Scoring (`src/missionguard/incidents/priority.py`)
+
+**`PriorityScore` dataclass** — Structured priority with component breakdown.
+
+| Component | Default Weight | Description |
+|-----------|----------------|-------------|
+| max_anomaly_score | 0.35 | Highest single anomaly score in incident |
+| mean_anomaly_score | 0.15 | Average anomaly intensity |
+| duration_factor | 0.20 | Longer incidents = higher priority (log-scaled) |
+| channel_count_factor | 0.15 | More channels = higher priority |
+| event_count_factor | 0.10 | More events = higher priority |
+| recurrence_factor | 0.05 | Repeated anomalies (placeholder) |
+
+**`PriorityScorer` class** — Computes priority with configurable weights.
+
+```python
+scorer = PriorityScorer(weights=custom_weights)
+score = scorer.compute_priority(incident)
+# Returns PriorityScore(total_score, components, weights, metadata)
+```
+
+**Priority labels:**
+- CRITICAL (≥ 0.75)
+- HIGH (≥ 0.5)
+- WATCH (≥ 0.25)
+- NOMINAL (< 0.25)
+
+### Evidence Packets (`src/missionguard/incidents/evidence.py`)
+
+**`EvidencePacket` dataclass** — Structured packet for LLM briefing and UI.
+
+**Key sections:**
+- Incident identification (id, timestamps, duration)
+- Affected systems (channels, count)
+- Anomaly evidence (events, scores, counts)
+- Priority (score, components, weights, label)
+- Model info (name, version, experiment, threshold, normalization)
+- Evaluation metrics (precision, recall, F1, ROC-AUC, false alarms/hr, detection delay)
+- Data quality (gaps, missing channels, sampling rates)
+- Schema version and generation metadata
+
+**Functions:**
+- `build_evidence_packet(incident, priority, model_info, evaluation_metrics, data_quality)` — Build packet
+- `serialize_evidence_packet(packet, format="json")` — Serialize to JSON/YAML
+- `validate_evidence_packet(packet)` — Check completeness, returns warnings
+- `build_llm_prompt(evidence_packet)` — Grounded prompt template for LLM briefing
+
+**LLM Briefing Template** — Enforces evidence-only claims:
+```
+**Summary**: What happened?
+**Why Flagged**: Which evidence triggered the alert?
+**Investigation Suggestions**: 2-3 actionable bullets
+⚠ Decision Support Only. Not for autonomous diagnosis.
+```
+
+### Incident Engine Pipeline Usage
+
+```python
+from missionguard.data import load_opssat_ad, get_train_test_split
+from missionguard.preprocessing import fit_scaler, transform_features, get_feature_names, prepare_features_target
+from missionguard.models import IsolationForestDetector
+from missionguard.detection import scores_to_events, merge_events
+from missionguard.incidents import (
+    aggregate_events_to_incidents,
+    merge_incidents,
+    PriorityScorer,
+    build_evidence_packet,
+)
+
+# Load and score
+segments, dataset = load_opssat_ad("data/raw/opssat-ad")
+train_seg, test_seg, train_ds, test_ds = get_train_test_split(segments, dataset)
+
+feature_names = get_feature_names(train_ds)
+scaler = fit_scaler(train_ds, feature_names, scaler_type="robust")
+train_scaled = transform_features(train_ds, scaler, feature_names)
+test_scaled = transform_features(test_ds, scaler, feature_names)
+
+X_train, y_train = prepare_features_target(train_scaled, feature_names)
+X_test, y_test = prepare_features_target(test_scaled, feature_names)
+
+# Load production model
+model = IsolationForestDetector.load("models/isolation_forest_prod_v1.joblib")
+scaler = RobustScalerWrapper.load("models/robust_scaler_prod_v1.joblib")
+
+# Score test data
+test_scores = model.score(X_test)
+test_preds = model.predict(X_test)
+
+# Event detection per channel
+ch_test = test_seg[test_seg['channel'] == 'CADC0872'].sort_values('timestamp')
+ch_segments = ch_test['segment'].unique()
+ch_ds = test_ds[test_ds['segment'].isin(ch_segments)].copy()
+ch_ds_scaled = transform_features(ch_ds, scaler, feature_names)
+X_ch, _ = prepare_features_target(ch_ds_scaled, feature_names)
+ch_scores = model.score(X_ch)
+ch_scores_norm = (ch_scores - ch_scores.min()) / (ch_scores.max() - ch_scores.min() + 1e-10)
+
+events = scores_to_events(ch_scores_norm, ch_ds['timestamp'], 'CADC0872', 
+                          threshold=model.threshold, min_duration=1)
+
+# Aggregate into incidents
+incidents = aggregate_events_to_incidents(events, max_gap_seconds=300)
+
+# Priority scoring
+scorer = PriorityScorer()
+for inc in incidents:
+    priority = scorer.compute_priority(inc)
+    inc.priority_score = priority.total_score
+    inc.priority_components = priority.components
+
+# Rank incidents
+ranked = scorer.rank_incidents(incidents)
+
+# Build evidence packets for LLM
+for inc in ranked:
+    priority = scorer.compute_priority(inc)
+    packet = build_evidence_packet(
+        inc,
+        priority=priority,
+        model_info={"name": "IsolationForestDetector", "version": "1.0.0", 
+                    "experiment_id": "EXP-005", "threshold": model.threshold,
+                    "score_normalization": "minmax"},
+        evaluation_metrics={"precision": 0.30, "recall": 0.80, "f1": 0.44, 
+                           "roc_auc": 0.64, "false_alarms_per_hour": 1500,
+                           "mean_detection_delay_seconds": 0.1},
+    )
+    # packet.to_json() for LLM
+```

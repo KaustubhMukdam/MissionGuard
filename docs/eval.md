@@ -27,10 +27,13 @@ The final model must beat the baseline meaningfully on the chosen evaluation pro
 
 | Model | Precision | Recall | F1 | PR-AUC | False alarms | Detection delay | Runtime |
 |-------|-----------|--------|----|--------|--------------|-----------------|---------|
-| Statistical baseline | TBD | TBD | TBD | TBD | TBD | TBD | TBD |
-| Isolation Forest | TBD | TBD | TBD | TBD | TBD | TBD | TBD |
-| LSTM/Autoencoder (if used) | TBD | TBD | TBD | TBD | TBD | TBD | TBD |
-| **Final model** | TBD | TBD | TBD | TBD | TBD | TBD | TBD |
+| Statistical baseline (MAD) | 0.735 | 0.319 | 0.444 | 0.620 | ~1,300/hr | 0.1s | <1s |
+| Isolation Forest (all 18 features) | 0.299 | 0.805 | 0.437 | 0.376 | ~1,450/hr | 0.1s | <1s |
+| **Isolation Forest (peak features only)** | **0.781** | **0.566** | **0.656** | **0.630** | **~850/hr** | **0.1s** | <1s |
+| Rolling MAD (60s window) | 0.285 | 0.058 | 0.096 | TBD | TBD | TBD | <1s |
+| Rolling Z-Score (60s window) | 0.349 | 0.057 | 0.098 | TBD | TBD | TBD | <1s |
+
+**Best single model:** Isolation Forest with peak-based features (3 features: n_peaks, smooth10_n_peaks, smooth20_n_peaks) — F1=0.656
 
 ## Evaluation protocol
 
@@ -56,6 +59,17 @@ For false negatives:
 - Did the model fail on a particular channel/group?
 - Did preprocessing remove useful signal?
 
+## Incident-level evaluation (Phase 4)
+
+| Metric | Description | Target |
+|--------|-------------|--------|
+| Incident precision | % of incidents that correspond to true anomaly clusters | > 0.7 |
+| Incident recall | % of true anomaly clusters captured as incidents | > 0.7 |
+| Incident F1 | Harmonic mean of incident precision/recall | > 0.7 |
+| Temporal alignment | Mean temporal offset between incident and true cluster | < 5 min |
+| Channel coverage | % of affected channels captured per incident | > 0.8 |
+| Priority ranking quality | % of high-priority incidents that are true anomalies | > 0.8 |
+
 ## What the numbers actually mean
 
 A recall of 0.80 means the detector identified 80% of the evaluated positive anomaly instances under the specified evaluation protocol. It does not mean the spacecraft is 80% safe, nor does it mean there is an 80% probability of failure.
@@ -71,3 +85,15 @@ MissionGuard should also be evaluated as a system:
 - Does incident grouping reduce alert clutter?
 - Does the priority score rank meaningful incidents above isolated low-value anomalies?
 - How long does it take from telemetry input to Incident Autopsy?
+
+## Incident Engine evaluation metrics
+
+| Component | Metric | Current | Target |
+|-----------|--------|---------|--------|
+| Event detection | Point-level F1 | 0.656 (peak features) | > 0.7 |
+| Temporal aggregation | Incident recall | TBD | > 0.7 |
+| Temporal aggregation | Temporal alignment (mean offset) | < 1 min | < 5 min |
+| Priority scoring | Ranking quality (NDCG@5) | TBD | > 0.8 |
+| Evidence packets | Completeness (all required fields) | 100% | 100% |
+| LLM briefing | Groundedness (no hallucinated telemetry) | 100% (template) | 100% |
+| End-to-end latency | Telemetry → Incident Autopsy | < 1s | < 5s |
