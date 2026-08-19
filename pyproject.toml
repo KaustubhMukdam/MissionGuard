@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "missionguard"
+version = "0.1.0"
+description = "AI-assisted spacecraft telemetry intelligence for anomaly detection, incident aggregation, prioritization, and evidence-grounded operator briefings."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "pandas>=2.2.0",
+    "numpy>=1.26.0",
+    "scikit-learn>=1.5.0",
+    "scipy>=1.13.0",
+    "plotly>=6.0.0",
+    "matplotlib>=3.9.0",
+    "seaborn>=0.13.0",
+    "streamlit>=1.40.0",
+    "tqdm>=4.66.0",
+    "requests>=2.32.0",
+    "python-dotenv>=1.0.0",
+    "pyyaml>=6.0.0",
+    "pytest>=8.0.0",
+    "pytest-cov>=4.0.0",
+    "jupyter>=1.0.0",
+    "ipykernel>=6.29.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "black>=24.10.0",
+    "ruff>=0.8.0",
+    "mypy>=1.8.0",
+]
+tensorflow = ["tensorflow>=2.20.0"]
+ibm = ["ibm-watsonx-ai>=1.0.0"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["missionguard*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
