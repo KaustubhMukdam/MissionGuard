@@ -8,7 +8,10 @@ import numpy as np
 import plotly.graph_objects as go
 from datetime import datetime
 
-from app.pages._path_setup import PROJECT_ROOT
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+
 from src.missionguard.ui.components import (
     inject_global_styles, panel, chart_container, badge, metric_row,
 )
@@ -91,8 +94,6 @@ def render():
     ])
     
     # Main content
-    col_left, col_right = st.columns([8, 4], gap="medium")
-    
     with st.container():
         col_left, col_right = st.columns([8, 4], gap="medium")
         

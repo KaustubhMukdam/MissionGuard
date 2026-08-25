@@ -3,18 +3,25 @@ MissionGuard UI Components Library
 Reusable HTML/CSS components for the MissionGuard Streamlit dashboard.
 """
 
+
 import streamlit as st
+from pathlib import Path
 from typing import List, Dict, Any, Optional, Union
 import pandas as pd
 import plotly.graph_objects as go
 import plotly.express as px
 
+# Absolute path to the CSS file, resolved relative to this file
+_CSS_PATH = Path(__file__).parent.parent.parent.parent / "app" / "style.css"
+
+
 
 def inject_custom_css():
     """Inject custom CSS into Streamlit app."""
-    with open("app/style.css", "r") as f:
+    with open(_CSS_PATH, "r") as f:
         css = f.read()
     st.markdown(f"<style>{css}</style>", unsafe_allow_html=True)
+
 
 
 def page_header(title: str, subtitle: str = "", icon: str = "") -> None:
@@ -322,7 +329,7 @@ def inject_global_styles() -> None:
     """, unsafe_allow_html=True)
     
     # Load custom CSS
-    with open("app/style.css", "r") as f:
+    with open(_CSS_PATH, "r") as f:
         css = f.read()
     st.markdown(f"<style>{css}</style>", unsafe_allow_html=True)
 

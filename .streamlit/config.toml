@@ -15,6 +15,3 @@ backgroundColor = "#050505"
 secondaryBackgroundColor = "#121417"
 textColor = "#e0e3e6"
 font = "monospace"
-
-[layout]
-sidebarState = "expanded"

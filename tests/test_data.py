@@ -260,7 +260,7 @@ class TestTemporalSplit:
     
     def test_temporal_split_basic(self):
         """Test basic temporal split functionality."""
-        dates = pd.date_range("2022-01-01", periods=100, freq="1H", tz="UTC")
+        dates = pd.date_range("2022-01-01", periods=100, freq="1h", tz="UTC")
         df = pd.DataFrame({
             "timestamp": dates,
             "value": np.random.randn(100),
@@ -277,7 +277,7 @@ class TestTemporalSplit:
     
     def test_temporal_split_preserves_order(self):
         """Test that temporal split preserves chronological order."""
-        dates = pd.date_range("2022-01-01", periods=50, freq="1H", tz="UTC")
+        dates = pd.date_range("2022-01-01", periods=50, freq="1h", tz="UTC")
         df = pd.DataFrame({
             "timestamp": dates,
             "value": np.arange(50),  # Increasing values

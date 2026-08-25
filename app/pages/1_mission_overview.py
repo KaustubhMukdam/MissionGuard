@@ -1,4 +1,4 @@
-"""
+﻿"""
 Mission Overview - Main dashboard page
 """
 
@@ -6,68 +6,47 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
-from datetime import datetime, timedelta
 
-from app.pages._path_setup import PROJECT_ROOT  # Ensures src module is importable
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+
 from src.missionguard.ui.components import (
     inject_global_styles, panel, kpi_card, badge, metric_row,
     chart_container, badge as status_badge, disclaimer, page_nav,
 )
 
+from app.data_bridge import build_dashboard_view, run_pipeline
 
+
+@st.cache_resource(show_spinner="Running MissionGuard detection pipeline...")
 def load_dashboard_data():
-    """Load data for the dashboard."""
-    # In production, this would load from the incident engine
-    # For now, return mock data
-    return {
-        "mission_name": "Orbital Sentinel-9",
-        "run_id": "OS9-A-2024-Q4",
-        "model_version": "Sentinel-Core v4.2.1",
-        "health_status": "WATCH (AMBER)",
-        "active_incidents": 3,
-        "kpis": {
-            "power": {"value": "98.2%", "trend": "+0.4% /hr", "variant": "primary", "icon": "bolt", "sparkline": [95, 96, 97, 98, 98, 99]},
-            "thermal": {"value": "312K", "trend": "+5K warning limit", "variant": "warning", "icon": "thermostat", "sparkline": [305, 308, 310, 312, 312, 312]},
-            "propulsion": {"value": "NOMINAL", "trend": "Delta-v: 450 m/s", "variant": "primary", "icon": "speed", "sparkline": [90, 92, 94, 95, 95, 96]},
-            "comm_link": {"value": "72%", "trend": "Degraded bandwidth", "variant": "error", "icon": "satellite_alt", "sparkline": [95, 88, 82, 78, 75, 72]},
-        },
-        "trend_chart": {
-            "timestamps": [datetime.now() - timedelta(minutes=i*15) for i in range(20, 0, -1)],
-            "bus_voltage": [28.1, 28.2, 28.0, 28.3, 28.1, 28.4, 28.2, 28.5, 28.3, 28.6, 28.4, 28.7, 28.5, 28.8, 28.6, 28.9, 28.7, 29.0, 28.8, 29.1],
-            "payload_power": [420, 420, 415, 425, 430, 428, 432, 435, 430, 428, 435, 438, 435, 432, 430, 428, 425, 430, 432, 430],
-        },
-        "anomaly_log": [
-            {"time": "14:22:09", "event": "Comm-Link Degraded", "detail": "Packet loss > 15% on Tx-Alpha. Rerouting...", "severity": "error"},
-            {"time": "13:05:44", "event": "Thermal Spk Core-2", "detail": "Temp rise +4K/min. Coolant loop active.", "severity": "warning"},
-            {"time": "11:45:00", "event": "Routine Telemetry Sync", "detail": "Handshake successful. V4.2.1 nominal.", "severity": "primary"},
-            {"time": "09:12:33", "event": "Payload Sequence Init", "detail": "Auto-sequencer started.", "severity": "nominal"},
-        ],
-        "incidents": [
-            {"incident_id": "INC-9942", "start_time": "14:22:01", "duration": "00:04:12", "channels": ["PRP-MAIN", "PRP-AUX"], "score": 98, "priority": "critical"},
-            {"incident_id": "INC-9941", "start_time": "14:15:44", "duration": "00:10:29", "channels": ["TEL-COM"], "score": 74, "priority": "high"},
-            {"incident_id": "INC-9938", "start_time": "13:42:11", "duration": "00:02:15", "channels": ["LFS-O2"], "score": 42, "priority": "watch"},
-        ],
-    }
+    """Run the production detection pipeline once and shape it for this page."""
+    return build_dashboard_view(run_pipeline())
 
 
 def render():
     inject_global_styles()
-    
-    # Load data
-    data = load_dashboard_data()
-    
-    # Load data
-    data = load_dashboard_data()
-    
-    # Navigation bar
+
+    # Load data — single call (Bug 6 fix: removed duplicate)
+    try:
+        data = load_dashboard_data()
+    except FileNotFoundError as exc:
+        st.error(
+            "Production model artifacts not found. Run the Phase 3b pipeline to "
+            f"generate models/isolation_forest_prod_v1.joblib first.\n\n{exc}"
+        )
+        st.stop()
+
+    # Navigation bar (Bug 4 fix: correct page paths with .py extensions)
     page_nav([
-        {"path": "streamlit_app.py", "label": "Overview", "icon": "rocket_launch"},
-        {"path": "Telemetry_Explorer", "label": "Explorer", "icon": "travel_explore"},
-        {"path": "Incident_Center", "label": "Incidents", "icon": "warning"},
-        {"path": "Incident_Autopsy", "label": "Autopsy", "icon": "science"},
-        {"path": "Model_Evaluation", "label": "Models", "icon": "analytics"},
+        {"path": "app/streamlit_app.py", "label": "Overview", "icon": "rocket_launch"},
+        {"path": "app/pages/2_telemetry_explorer.py", "label": "Explorer", "icon": "travel_explore"},
+        {"path": "app/pages/3_incident_center.py", "label": "Incidents", "icon": "warning"},
+        {"path": "app/pages/4_incident_autopsy.py", "label": "Autopsy", "icon": "science"},
+        {"path": "app/pages/5_model_evaluation.py", "label": "Models", "icon": "analytics"},
     ])
-    
+
     # Page header
     st.markdown(f"""
     <div style="padding: 16px 24px; border-bottom: 1px solid var(--color-outline-variant);">
@@ -92,10 +71,10 @@ def render():
         </div>
     </div>
     """, unsafe_allow_html=True)
-    
+
     # KPI Row
     st.markdown('<div class="mg-flex mg-gap-md" style="padding: 16px 24px;">', unsafe_allow_html=True)
-    
+
     kpis = data['kpis']
     cols = st.columns(4)
     for i, (key, kpi) in enumerate(kpis.items()):
@@ -109,33 +88,34 @@ def render():
                 variant=kpi['variant'],
                 sparkline_data=kpi.get('sparkline'),
             ), unsafe_allow_html=True)
-    
+
     st.markdown('</div>', unsafe_allow_html=True)
-    
+
     # Main content area
     col_left, col_right = st.columns([8, 4], gap="medium")
-    
+
     with col_left:
-        # Trend Chart
+        # Trend Chart (real per-segment telemetry with anomaly markers)
         trend_data = data['trend_chart']
-        
+
         fig = go.Figure()
         fig.add_trace(go.Scatter(
             x=trend_data['timestamps'],
-            y=trend_data['bus_voltage'],
+            y=trend_data['values'],
             mode='lines',
-            name='Bus (V)',
-            line=dict(color='#a4e6ff', width=1.5),
+            name=trend_data.get('channel') or 'Telemetry',
+            line=dict(color='#a4e6ff', width=1.2),
         ))
-        fig.add_trace(go.Scatter(
-            x=trend_data['timestamps'],
-            y=trend_data['payload_power'],
-            mode='lines',
-            name='Payload (W)',
-            line=dict(color='#ffddb1', width=1, dash='dash'),
-            yaxis='y2'
-        ))
-        
+        if trend_data['anomaly_positions']:
+            pos = trend_data['anomaly_positions']
+            fig.add_trace(go.Scatter(
+                x=[trend_data['timestamps'][p] for p in pos],
+                y=[trend_data['values'][p] for p in pos],
+                mode='markers',
+                name='Anomaly',
+                marker=dict(color='#ffb4ab', size=6, symbol='x'),
+            ))
+
         fig.update_layout(
             template='plotly_dark',
             paper_bgcolor='#0b0f11',
@@ -148,17 +128,10 @@ def render():
                 showgrid=True,
             ),
             yaxis=dict(
-                title='Bus (V)',
+                title='Mean value / segment',
                 gridcolor='#3c494e',
                 tickfont=dict(family='JetBrains Mono', size=9),
                 side='left',
-            ),
-            yaxis2=dict(
-                title='Payload (W)',
-                gridcolor='#3c494e',
-                tickfont=dict(family='JetBrains Mono', size=9),
-                overlaying='y',
-                side='right',
             ),
             legend=dict(
                 orientation='h',
@@ -170,9 +143,9 @@ def render():
             ),
             height=300,
         )
-        
+
         st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
-        
+
         # Anomaly Log
         st.markdown("""
         <div class="mg-panel" style="margin-top: 16px;">
@@ -183,8 +156,9 @@ def render():
             </div>
         </div>
         """, unsafe_allow_html=True)
-        
-        for entry in st.session_state.get('anomaly_log', []):
+
+        # Bug 5 fix: read from data['anomaly_log'] instead of st.session_state
+        for entry in data.get('anomaly_log', []):
             severity_colors = {
                 'error': ('error', 'var(--color-error)'),
                 'warning': ('warning', 'var(--color-tertiary)'),
@@ -192,7 +166,7 @@ def render():
                 'nominal': ('nominal', 'var(--color-on-surface-variant)'),
             }
             variant, color = severity_colors.get(entry['severity'], ('nominal', 'var(--color-on-surface-variant)'))
-            
+
             st.markdown(f"""
             <div style="display: grid; grid-template-columns: auto 1fr; gap: 8px; padding: 8px; border-bottom: 1px solid var(--color-outline-variant); align-items: start;">
                 <div class="mg-badge {entry['severity']}" style="white-space: nowrap;">{entry['time']}</div>
@@ -202,7 +176,7 @@ def render():
                 </div>
             </div>
             """, unsafe_allow_html=True)
-    
+
     with col_right:
         # Active Incidents
         st.markdown("""
@@ -214,12 +188,12 @@ def render():
             </div>
         </div>
         """, unsafe_allow_html=True)
-        
-        incidents_data = st.session_state.get('incidents', [])
-        for inc in incidents_data:
+
+        # Bug 5 fix: read from data['incidents'] instead of st.session_state
+        for inc in data.get('incidents', []):
             priority = inc['priority']
             badge_var = 'critical' if priority == 'critical' else 'high' if priority == 'high' else 'watch' if priority == 'watch' else 'nominal'
-            
+
             st.markdown(f"""
             <div style="border: 1px solid var(--color-outline-variant); border-radius: 4px; padding: 12px; margin-bottom: 8px; background: var(--color-surface-container);">
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
@@ -234,7 +208,7 @@ def render():
                 </div>
             </div>
             """, unsafe_allow_html=True)
-        
+
         st.markdown("""
         <div style="text-align: center; padding: 16px;">
             <button class="mg-btn mg-btn-ghost" style="width: 100%;">VIEW ALL INCIDENTS</button>
@@ -249,7 +223,7 @@ def main():
         layout="wide",
         initial_sidebar_state="expanded",
     )
-    
+
     render()
 
 
