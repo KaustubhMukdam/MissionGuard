@@ -7,7 +7,10 @@ import pandas as pd
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
 
-from app.pages._path_setup import PROJECT_ROOT
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+
 from src.missionguard.ui.components import (
     inject_global_styles, panel, badge, metric_row, data_table,
 )
@@ -123,8 +126,8 @@ def render():
     </div>
     """, unsafe_allow_html=True)
     
-    # Table header
-    st.markdown("""
+    # Table header and rows (fixed rendering issue)
+    table_html = """
     <div class="mg-table-container">
         <table class="mg-table">
             <thead>
@@ -139,7 +142,7 @@ def render():
                 </tr>
             </thead>
             <tbody>
-    """, unsafe_allow_html=True)
+    """
     
     for inc in filtered:
         status_class = "new" if inc["status"] == "new" else "investigating" if inc["status"] == "investigating" else "reviewed"
@@ -150,9 +153,7 @@ def render():
         }
         variant, _ = status_colors.get(inc["status"], ("nominal", "var(--color-on-surface-variant)"))
         
-        channels_html = "".join([f'<span class="mg-badge nominal">{ch}</span>' for ch in inc["channels"]])
-        
-        st.markdown(f"""
+        table_html += f"""
         <tr style="cursor: pointer;">
             <td>
                 <span class="mg-badge {variant}">
@@ -167,13 +168,15 @@ def render():
             <td class="data-mono-md" style="text-align: right; color: {'var(--color-error)' if inc['score'] > 90 else 'var(--color-tertiary)' if inc['score'] > 70 else 'var(--color-on-surface-variant)'}; font-weight: {'bold' if inc['score'] > 70 else 'normal'};">{inc['score']}</td>
             <td style="text-align: center;"><span class="material-symbols-outlined" style="color: var(--color-primary); cursor: pointer;">open_in_new</span></td>
         </tr>
-        """, unsafe_allow_html=True)
+        """
     
-    st.markdown("""
+    table_html += """
             </tbody>
         </table>
     </div>
-    """, unsafe_allow_html=True)
+    """
+    
+    st.markdown(table_html, unsafe_allow_html=True)
     
     # Pagination
     st.markdown("""
