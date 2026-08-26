@@ -21,10 +21,15 @@ from src.missionguard.detection.events import AnomalyEvent
 from src.missionguard.incidents.evidence import build_evidence_packet, validate_evidence_packet
 from app.data_bridge import (
     MAX_TREND_POINTS,
+    briefing_from_packet,
     build_dashboard_view,
+    build_model_report,
+    event_window_series,
+    incidents_table_rows,
     load_evaluation_metrics,
     load_production_models,
     run_pipeline,
+    telemetry_slice,
 )
 
 FEATURE_NAMES = [
@@ -323,6 +328,96 @@ class TestDashboardView:
         assert view["anomaly_log"] == []
         assert view["trend_chart"]["timestamps"] == []
         assert view["kpis"]["active_incidents"]["value"] == "0"
+
+
+class TestTelemetrySlice:
+    def test_slice_alignment_and_anomaly_positions(self, workspace):
+        result = run_pipeline(*workspace)
+        scored = result["scored"]
+        threshold = result["model_info"]["threshold"]
+        sl = telemetry_slice(scored, 0, len(scored), threshold)
+        assert len(sl["timestamps"]) == len(sl["values"]) == len(sl["scores"]) == len(scored)
+        assert all(0 <= p < len(sl["values"]) for p in sl["anomaly_positions"])
+
+    def test_partial_slice(self, workspace):
+        result = run_pipeline(*workspace)
+        scored = result["scored"]
+        sl = telemetry_slice(scored, 1, 3, None)
+        assert len(sl["values"]) == 2
+
+    def test_empty_scored_frame(self, tmp_path):
+        data_dir, models_dir, metrics_path = _build_workspace(tmp_path, n_test_rows=0)
+        result = run_pipeline(data_dir, models_dir, metrics_path)
+        sl = telemetry_slice(result["scored"], 0, 10, 0.5)
+        assert sl == {"timestamps": [], "values": [], "scores": [], "anomaly_positions": []}
+
+
+class TestIncidentsTableRows:
+    def test_row_shape_and_ordering(self, workspace):
+        result = run_pipeline(*workspace)
+        rows = incidents_table_rows(result)
+        assert len(rows) == len(result["incidents"])
+        for row in rows:
+            assert set(row.keys()) == {
+                "Priority", "Incident ID", "Start", "Duration", "Channels", "Score"
+            }
+            assert isinstance(row["Score"], int) and 0 <= row["Score"] <= 100
+            assert row["Priority"] in {"CRITICAL", "HIGH", "WATCH", "NOMINAL"}
+        scores = [r["Score"] for r in rows]
+        assert scores == sorted(scores, reverse=True)
+
+
+class TestEventWindowSeries:
+    def test_window_contains_raw_telemetry(self, workspace):
+        result = run_pipeline(*workspace)
+        packet = next(iter(result["packets"].values()))
+        window = event_window_series(result, packet)
+        assert len(window["timestamps"]) == len(window["values"])
+        assert len(window["timestamps"]) > 0
+        assert window["event_start"] is not None
+        assert 0 <= window["event_start"] < len(window["timestamps"])
+
+    def test_unknown_channel_returns_empty(self, workspace):
+        result = run_pipeline(*workspace)
+        packet = next(iter(result["packets"].values()))
+        packet.affected_channels = ["DOES-NOT-EXIST"]
+        window = event_window_series(result, packet)
+        assert window["timestamps"] == []
+        assert window["event_start"] is None
+
+
+class TestBriefingFromPacket:
+    def test_deterministic_and_evidence_grounded(self, workspace):
+        result = run_pipeline(*workspace)
+        packet = next(iter(result["packets"].values()))
+        b1 = briefing_from_packet(packet)
+        b2 = briefing_from_packet(packet)
+        assert b1 == b2
+        assert set(b1.keys()) == {"summary", "why_flagged", "suggestions"}
+        assert packet.affected_channels[0] in b1["summary"]
+        assert str(packet.model_name) in b1["why_flagged"]
+        assert len(b1["suggestions"]) == 3
+
+
+class TestModelReport:
+    def test_report_from_fixture_artifacts(self, workspace):
+        _, models_dir, metrics_path = workspace
+        report = build_model_report(models_dir, metrics_path)
+        assert report["model_config"]["model_name"] == "IsolationForestDetector"
+        assert report["evaluation_metrics"]["f1"] == pytest.approx(0.77)
+        # fixture has no artifacts dir next to models/, so no experiment CSV section
+        assert "feature_group_experiments" not in report
+
+    def test_missing_config_raises(self, workspace):
+        _, models_dir, metrics_path = workspace
+        (models_dir / "prod_config_v1.json").unlink()
+        with pytest.raises(FileNotFoundError):
+            build_model_report(models_dir, metrics_path)
+
+    def test_missing_metrics_tolerated(self, workspace):
+        _, models_dir, _ = workspace
+        report = build_model_report(models_dir, models_dir / "missing.json")
+        assert report["evaluation_metrics"] is None
 
 
 if __name__ == "__main__":

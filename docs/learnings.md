@@ -4,6 +4,49 @@
 
 ---
 
+## 2026-08-25 — Phase 5a: Backend↔Frontend Bridge
+
+### What I learned
+
+**The frontend/backend gap was the real MVP blocker.** All 5 Streamlit pages rendered beautifully but consumed hardcoded mock data, while the production model artifacts sat unused in `models/`. The fix was a pure-Python bridge module (`app/data_bridge.py`) with no Streamlit imports — pages call it, tests test it, nothing else changes.
+
+**dataset.csv has no timestamps.** Segment-level scores need time windows to become events. Solution: groupby segment on raw segments.csv to get per-segment min/max timestamp + mean value, then merge into the scored frame. (First attempt also aggregated `channel` there — pandas merge silently suffixed it to `channel_x`/`channel_y` and downstream code got `KeyError: 'channel'`. Aggregate only what one side uniquely contributes.)
+
+**Validation order matters.** `validate_dataset_df` only *warns* about inf in features, and `RobustScaler.transform` raises on inf. So inf rows sail through loading and explode at scaling. Non-finite rows must be masked on RAW features BEFORE any sklearn call. (Same family of lesson as the NaN-threshold bug from Phase 3a: guard the earliest boundary.)
+
+**Hermetic fixtures over real data for pipeline tests.** Instead of loading 300K real rows, `tests/test_bridge.py` builds a miniature OPSSAT-AD-shaped workspace in `tmp_path` (12 segments, 18 features, tiny iForest trained in-fixture). Runs in <1s, deterministic, and edge cases (empty split, missing artifacts, inf rows) are constructible on demand. Full suite: 7.6s.
+
+**View-model pattern keeps TDD alive in a UI task.** `build_dashboard_view(result)` is a pure function that maps pipeline output → exactly the dict the page renders. All mapping logic (severity bands, duration formatting, KPI values, trend downsampling) is unit-testable; the page is a dumb renderer. Mock KPIs like "Comm-Link 72%" were replaced with honest ones derived from real evidence (incident count, event count, model F1, segments scored).
+
+**`st.cache_resource` for expensive pipelines.** The bridge runs the full detect→incident pipeline (~seconds on real data); wrapping the page's loader in `@st.cache_resource` means it executes once per process, not per widget rerun.
+
+### Code snippet that clicked
+
+```python
+# Per-segment windows joined from raw telemetry; channel comes from dataset.csv side
+windows = segments.groupby("segment").agg(
+    timestamp=("timestamp", "min"), end=("timestamp", "max"), value=("value", "mean"),
+)
+scored = test_ds.merge(windows, left_on="segment", right_index=True, how="left").sort_values("timestamp")
+
+finite_mask = np.isfinite(scored[feature_names].to_numpy(dtype=float)).all(axis=1)  # BEFORE sklearn
+scores = model.score(transform_features(scored[finite_mask], scaler, feature_names))
+```
+
+### What confused me today
+
+Why `.pytest_cache/v/cache/lastfailed` listed two failing tests that actually passed. Stale cache — one test had been rewritten to skip gracefully (`test_yaml_serialization`), the other's source bug was already fixed. Lesson: treat pytest cache as a hint, verify before acting.
+
+### How I solved it
+
+Ran the targeted file (`pytest tests/test_incidents.py -v`) on Windows and Linux — both green, cache ignored. Baseline confirmed at 105 passing before any new work.
+
+### What I'd do differently
+
+Wire pages to the backend much earlier. The mock-data UI created false confidence; the moment real data flowed, fake metrics ("Precision 98.2%") became an integrity problem (PRD forbids unsupported claims).
+
+---
+
 ## 2026-08-12 — Ideation and dataset selection
 
 ### What I learned

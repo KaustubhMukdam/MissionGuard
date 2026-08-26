@@ -309,17 +309,6 @@ def sidebar_nav(items: List[Dict], active_key: str) -> str:
     return f'<nav class="mg-sidebar">{items_html}</nav>'
 
 
-def page_nav(pages: List[Dict]) -> None:
-    """Render Streamlit page navigation links."""
-    for page in pages:
-        st.page_link(
-            page=page["path"],
-            label=page["label"],
-            icon=page.get("icon", ""),
-            use_container_width=False,
-        )
-
-
 def inject_global_styles() -> None:
     """Inject all custom CSS and fonts."""
     # Load Google Fonts

@@ -6,6 +6,8 @@
 - [ ] Evaluate whether LSTM/autoencoder adds value
 - [ ] Integrate Granite/watsonx only after the analytical pipeline works
 - [ ] Create Streamlit dashboard
+  - [x] Page 1 (Mission Overview) wired to live pipeline
+  - [ ] Pages 2–5 still consume mock data — next: Incident Center + Autopsy via `run_pipeline()` output
 - [ ] Add unit tests for non-trivial functions
 - [ ] Prepare public deployment
 
@@ -58,6 +60,15 @@
   - LLM briefing template for grounded briefings
   - Unit tests for aggregation, priority, evidence (20 tests passing)
   - Total tests: 105 passing
+- [x] Phase 5a: Backend↔Frontend bridge (`app/data_bridge.py`, 2026-08-25)
+  - `load_production_models()` / `load_evaluation_metrics()` — artifact loading with graceful metrics fallback
+  - `run_pipeline()` — prod artifacts → load OPSSAT-AD → segment-based split → scale → IsolationForest score → per-channel events (`get_events_per_channel`) → incidents (5-min gap) → priority ranking → `EvidencePacket` per incident
+  - Per-segment time windows joined from raw segments.csv (dataset.csv carries no timestamps)
+  - Non-finite feature rows dropped BEFORE scaling/scoring (sklearn raises on NaN/inf; loader validation only warns on inf)
+  - `build_dashboard_view()` — pure function mapping pipeline result to the exact dict Mission Overview renders (honest KPIs: incident count / event count / model F1 / segments scored)
+  - `1_mission_overview.py` wired to live pipeline via `@st.cache_resource`; FileNotFoundError guard for missing artifacts; trend chart shows real CADC0872 telemetry with anomaly markers
+  - Tests: `tests/test_bridge.py` — hermetic synthetic workspace fixture (tmp_path), 16 tests covering normal + edge cases (empty test split, missing model file, inf rows, threshold respect, ranking order, packet validation)
+  - Total tests: 121 passing
 
 ## Blocked
 

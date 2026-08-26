@@ -1,294 +1,158 @@
 """
-Model & Evaluation - Model performance and experiment tracking
+Model & Evaluation - Real production metrics and Phase 3b experiments
 """
 
+import json
 import streamlit as st
 import pandas as pd
-import numpy as np
 import plotly.graph_objects as go
-from datetime import datetime
 
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from src.missionguard.ui.components import (
-    inject_global_styles, panel, chart_container, badge, metric_row,
+from src.missionguard.ui.components import inject_global_styles, metric_row
+from app.data_bridge import (
+    DEFAULT_METRICS_PATH,
+    DEFAULT_MODELS_DIR,
+    PROJECT_ROOT,
+    build_model_report,
+    load_evaluation_metrics,
 )
 
+ARTIFACTS = PROJECT_ROOT / "artifacts" / "phase3b"
 
-def load_evaluation_data():
-    """Load model evaluation data."""
-    return {
-        "experiment_id": "EXP-772-B",
-        "model_name": "DeepPulse-S5",
-        "model_status": "Active",
-        "metrics": {
-            "precision": 0.982,
-            "recall": 0.915,
-            "f1": 0.947,
-        },
-        "false_alarm_data": {
-            "fpr": [0, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5],
-            "tpr": [0, 0.45, 0.65, 0.78, 0.85, 0.90, 0.93, 0.95, 0.97, 0.98, 1.0],
-        },
-        "detection_delay": {
-            "bins": ["0", "50", "100", "150", "200", "250", "300", "350", "400", "450", "500+"],
-            "counts": [5, 12, 28, 52, 89, 145, 210, 180, 95, 42, 18],
-        },
-        "dataset": {
-            "source": "2023-Solar-Max-Data-Split",
-            "size": "45.2 TB",
-            "events": 1048576,
-            "start": "2023-11-04T00:00Z",
-            "end": "2023-11-18T23:59Z",
-            "hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-        },
-        "comparison": {
-            "Statistical Baseline": {"precision": 0.73, "recall": 0.32, "f1": 0.44, "roc_auc": 0.89},
-            "Isolation Forest (18 feat)": {"precision": 0.30, "recall": 0.81, "f1": 0.44, "roc_auc": 0.64},
-            "Isolation Forest (peak)": {"precision": 0.78, "recall": 0.57, "f1": 0.66, "roc_auc": 0.63},
-            "DeepPulse-S5": {"precision": 0.98, "recall": 0.92, "f1": 0.95, "roc_auc": 0.99},
-        },
-    }
+
+@st.cache_resource(show_spinner="Loading model artifacts...")
+def load_all():
+    config = json.loads((DEFAULT_MODELS_DIR / "prod_config_v1.json").read_text())
+    metrics = load_evaluation_metrics(DEFAULT_METRICS_PATH)
+    fg = pd.read_csv(ARTIFACTS / "experiment_feature_groups.csv")
+    cont = pd.read_csv(ARTIFACTS / "experiment_contamination_sweep.csv")
+    nest = pd.read_csv(ARTIFACTS / "experiment_n_estimators_sweep.csv")
+    return config, metrics, fg, cont, nest
 
 
 def render():
     inject_global_styles()
-    
-    data = load_evaluation_data()
-    
+
+    try:
+        config, metrics, fg, cont, nest = load_all()
+    except FileNotFoundError as exc:
+        st.error(f"Experiment artifacts not found: {exc}")
+        st.stop()
+
     # Header
-    st.markdown("""
-    <div class="mg-header">
-        <div class="mg-header-title">MissionGuard</div>
-        <div class="mg-header-nav">
-            <a class="mg-header-nav-item">Overview</a>
-            <a class="mg-header-nav-item">Explorer</a>
-            <a class="mg-header-nav-item">Incidents</a>
-            <a class="mg-header-nav-item">Autopsy</a>
-            <a class="mg-header-nav-item active">Models</a>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-    
     st.markdown(f"""
     <div style="padding: 16px 24px; border-bottom: 1px solid var(--color-outline-variant); display: flex; justify-content: space-between; align-items: end; gap: 16px;">
         <div>
             <h1 style="margin: 0;">Model & Evaluation</h1>
-            <div class="data-mono-md" style="color: var(--color-on-surface-variant); margin-top: 4px;">Experiment ID: <span class="primary">{data['experiment_id']}</span></div>
+            <div class="data-mono-md" style="color: var(--color-on-surface-variant); margin-top: 4px;">
+                {config['model_name']} v{config['version']} | trained {config.get('training_date', '')[:10]}
+            </div>
         </div>
-        <div class="status-badge" style="background: rgba(0, 209, 255, 0.1); border: 1px solid var(--color-primary); color: var(--color-primary); padding: 4px 12px; border-radius: 9999px; font-family: var(--font-mono); font-size: 10px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; display: flex; align-items: center; gap: 6px;">
-            <span style="width: 6px; height: 6px; border-radius: 50%; background: var(--color-primary); animation: mg-pulse 1.5s infinite;"></span>
-            {data['model_name']} Active
-        </div>
+        <span class="mg-badge primary">{config['score_normalization']} scores | F1-optimal threshold</span>
     </div>
     """, unsafe_allow_html=True)
-    
-    # Metrics row
-    m = data['metrics']
+
+    # Real production metrics
+    m = metrics or {}
     metric_row([
-        {"title": "Precision", "value": f"{m['precision']:.1%}", "trend": "0.982", "variant": "primary", "icon": "target"},
-        {"title": "Recall", "value": f"{m['recall']:.1%}", "trend": "0.915", "variant": "warning", "icon": "search"},
-        {"title": "F1 Score", "value": f"{m['f1']:.3f}", "trend": "0.947", "variant": "primary", "icon": "calculate"},
+        {"title": "Precision", "value": f"{m['precision']:.1%}" if m else "N/A", "trend": f"{m['tp']} TP / {m['fp']} FP" if m else "", "variant": "primary", "icon": "target"},
+        {"title": "Recall", "value": f"{m['recall']:.1%}" if m else "N/A", "trend": f"delay {m['mean_detection_delay_seconds']:.2f}s" if m else "", "variant": "warning", "icon": "search"},
+        {"title": "F1 Score", "value": f"{m['f1']:.3f}" if m else "N/A", "trend": f"ROC-AUC {m['roc_auc']:.3f}" if m else "", "variant": "primary", "icon": "calculate"},
+        {"title": "False Alarms", "value": f"{m['false_alarms_per_hour']:.0f}/hr" if m else "N/A", "trend": f"PR-AUC {m['pr_auc']:.3f}" if m else "", "variant": "error", "icon": "notifications"},
     ])
-    
-    # Main content
-    with st.container():
-        col_left, col_right = st.columns([8, 4], gap="medium")
-        
-        with col_left:
-            # False Alarm Behavior (ROC-like)
-            fig = go.Figure()
-            
-            fpr = data['false_alarm_data']['fpr']
-            tpr = data['false_alarm_data']['tpr']
-            
-            # ROC curve
-            fig.add_trace(go.Scatter(
-                x=fpr,
-                y=tpr,
-                mode='lines+markers',
-                name='DeepPulse-S5',
-                line=dict(color='#a4e6ff', width=2),
-                marker=dict(size=4, color='#a4e6ff'),
-            ))
-            
-            # Random baseline
-            fig.add_trace(go.Scatter(
-                x=[0, 1],
-                y=[0, 1],
-                mode='lines',
-                name='Random',
-                line=dict(color='#859399', width=1, dash='dash'),
-            ))
-            
-            fig.update_layout(
-                template='plotly_dark',
-                paper_bgcolor='#1c2023',
-                plot_bgcolor='#0b0f11',
-                font=dict(family='JetBrains Mono', size=10, color='#e0e3e6'),
-                margin=dict(l=60, r=20, t=10, b=40),
-                xaxis=dict(
-                    title='False Positive Rate',
-                    gridcolor='#3c494e',
-                    tickfont=dict(family='JetBrains Mono', size=9),
-                ),
-                yaxis=dict(
-                    title='True Positive Rate',
-                    gridcolor='#3c494e',
-                    tickfont=dict(family='JetBrains Mono', size=9),
-                ),
-                legend=dict(
-                    orientation='h',
-                    yanchor='bottom', y=1.02,
-                    xanchor='right', x=1,
-                    font=dict(family='JetBrains Mono', size=10),
-                ),
-                height=280,
-            )
-            
-            st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
-            
-            # Detection Delay
-            dd = data['detection_delay']
-            
-            fig2 = go.Figure()
-            fig2.add_trace(go.Bar(
-                x=dd['bins'],
-                y=dd['counts'],
-                marker_color='#a4e6ff',
-                opacity=0.7,
-                hovertemplate='Delay: %{x}ms<br>Count: %{y}<extra></extra>',
-            ))
-            # Highlight peak
-            fig2.add_trace(go.Bar(
-                x=[dd['bins'][5]],
-                y=[dd['counts'][5]],
-                marker_color='#ffddb1',
-                opacity=1.0,
-                showlegend=False,
-            ))
-            
-            fig2.update_layout(
-                template='plotly_dark',
-                paper_bgcolor='#1c2023',
-                plot_bgcolor='#0b0f11',
-                font=dict(family='JetBrains Mono', size=9, color='#e0e3e6'),
-                margin=dict(l=60, r=20, t=10, b=40),
-                xaxis=dict(
-                    title='Detection Delay (ms)',
-                    gridcolor='#3c494e',
-                    tickfont=dict(family='JetBrains Mono', size=9),
-                ),
-                yaxis=dict(
-                    gridcolor='#3c494e',
-                    tickfont=dict(family='JetBrains Mono', size=9),
-                ),
-                showlegend=False,
-                height=200,
-            )
-            
-            st.plotly_chart(fig2, use_container_width=True, config={'displayModeBar': False})
-        
-        with col_right:
-            # Model metadata
-            st.markdown("""
-            <div class="mg-panel">
-                <div class="mg-panel-header">
-                    <div class="mg-panel-title">
-                        <span class="material-symbols-outlined" style="font-size: 18px;">dataset</span>
-                        <span class="label-caps" style="letter-spacing: 0.1em;">Evaluation Dataset</span>
-                    </div>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
-            
-            ds = load_evaluation_data()['dataset']
-            st.markdown(f"""
-            <div class="mg-panel" style="margin-top: 16px;">
-                <div class="mg-panel-header">
-                    <span class="label-caps">Source Reference</span>
-                </div>
-                <div class="mg-panel-inlay" style="font-family: var(--font-mono); font-size: 12px; color: var(--color-primary); border-left: 2px solid var(--color-primary); padding: 8px 12px;">
-                    {ds['source']}
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
-            
-            # Dataset table
-            st.markdown("""
-            <table class="mg-table" style="margin-top: 16px;">
-                <tbody>
-                    <tr><td class="mg-body-md" style="color: var(--color-on-surface-variant);">Size</td><td class="mg-data-mono-md" style="text-align: right;">45.2 TB</td></tr>
-                    <tr><td class="mg-body-md" style="color: var(--color-on-surface-variant);">Events</td><td class="mg-data-mono-md" style="text-align: right;">1,048,576</td></tr>
-                    <tr><td class="mg-body-md" style="color: var(--color-on-surface-variant);">Timestamp Start</td><td class="mg-data-mono-md" style="text-align: right;">2023-11-04T00:00Z</td></tr>
-                    <tr><td class="mg-body-md" style="color: var(--color-on-surface-variant);">Timestamp End</td><td class="mg-data-mono-md" style="text-align: right;">2023-11-18T23:59Z</td></tr>
-                    <tr><td class="mg-body-md" style="color: var(--color-on-surface-variant);">Hash (SHA-256)</td><td class="mg-data-mono-md" style="text-align: right; opacity: 0.7; max-width: 120px; overflow: hidden; text-overflow: ellipsis;">e3b0c442...</td></tr>
-                </tbody>
-            </table>
-            """, unsafe_allow_html=True)
-            
-            st.button("EXPORT LOG REPORT", use_container_width=True, type="secondary")
-        
-        # Model Comparison Table
+
+    col_left, col_right = st.columns([8, 4], gap="medium")
+
+    with col_left:
+        # Feature group ablation (the key Phase 3b finding)
+        fig = go.Figure()
+        fig.add_trace(go.Bar(
+            x=fg["feature_group"],
+            y=fg["f1"],
+            marker_color=['#ffddb1' if f == fg["f1"].max() else '#a4e6ff' for f in fg["f1"]],
+            opacity=0.85,
+            hovertemplate='%{x}: F1=%{y:.3f}<extra></extra>',
+        ))
+        fig.update_layout(
+            template='plotly_dark',
+            paper_bgcolor='#1c2023',
+            plot_bgcolor='#0b0f11',
+            font=dict(family='JetBrains Mono', size=10, color='#e0e3e6'),
+            margin=dict(l=60, r=20, t=30, b=40),
+            title=dict(text="Feature group ablation — F1 by input features", font=dict(size=12)),
+            yaxis=dict(title='F1', gridcolor='#3c494e', tickfont=dict(family='JetBrains Mono', size=9)),
+            xaxis=dict(gridcolor='#3c494e', tickfont=dict(family='JetBrains Mono', size=9)),
+            height=280,
+        )
+        st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
+
+        fig2 = go.Figure()
+        fig2.add_trace(go.Scatter(
+            x=cont.iloc[:, 0], y=cont["f1"], mode='lines+markers',
+            name='Contamination sweep', line=dict(color='#a4e6ff', width=2),
+        ))
+        fig2.add_trace(go.Scatter(
+            x=nest.iloc[:, 0], y=nest["f1"], mode='lines+markers',
+            name='N_estimators sweep', line=dict(color='#ffddb1', width=2), yaxis='y2',
+        ))
+        fig2.update_layout(
+            template='plotly_dark',
+            paper_bgcolor='#1c2023',
+            plot_bgcolor='#0b0f11',
+            font=dict(family='JetBrains Mono', size=10, color='#e0e3e6'),
+            margin=dict(l=60, r=60, t=30, b=40),
+            title=dict(text="Hyperparameter stability sweeps", font=dict(size=12)),
+            xaxis=dict(title='Parameter value', gridcolor='#3c494e', tickfont=dict(family='JetBrains Mono', size=9)),
+            yaxis=dict(title='Contamination sweep F1', gridcolor='#3c494e', side='left'),
+            yaxis2=dict(title='N_estimators sweep F1', overlaying='y', side='right', showgrid=False),
+            legend=dict(orientation='h', yanchor='bottom', y=-0.35, xanchor='left', x=0),
+            height=280,
+        )
+        st.plotly_chart(fig2, use_container_width=True, config={'displayModeBar': False})
+
+    with col_right:
         st.markdown("""
-        <div class="mg-panel" style="margin-top: 16px;">
+        <div class="mg-panel">
             <div class="mg-panel-header">
                 <div class="mg-panel-title">
-                    <span class="label-caps">Model Comparison</span>
+                    <span class="material-symbols-outlined" style="font-size: 18px;">dataset</span>
+                    <span class="label-caps" style="letter-spacing: 0.1em;">Training Setup</span>
                 </div>
             </div>
         </div>
         """, unsafe_allow_html=True)
-        
-        comp = load_evaluation_data()['comparison']
-        
-        st.markdown("""
-        <div class="mg-table-container">
-            <table class="mg-table">
-                <thead>
-                    <tr>
-                        <th class="label-caps">Model</th>
-                        <th class="label-caps numeric">Precision</th>
-                        <th class="label-caps numeric">Recall</th>
-                        <th class="label-caps numeric">F1</th>
-                        <th class="label-caps numeric">ROC-AUC</th>
-                    </tr>
-                </thead>
-                <tbody>
-        """, unsafe_allow_html=True)
-        
-        for name, m in comp.items():
-            is_best = name == "DeepPulse-S5"
-            row_style = 'style="background: rgba(0, 209, 255, 0.05);"' if is_best else ''
-            best_badge = '<span class="mg-badge primary" style="font-size: 9px;">OPTIMAL</span>' if is_best else ''
-            
-            st.markdown(f"""
-            <tr {row_style}>
-                <td class="data-mono-md" style="font-weight: {'bold' if is_best else 'normal'};"{'' if not is_best else ' style="color: var(--color-primary);"'}>{name} {best_badge}</td>
-                <td class="data-mono-md numeric">{m['precision']:.2f}</td>
-                <td class="data-mono-md numeric">{m['recall']:.2f}</td>
-                <td class="data-mono-md numeric" style="font-weight: {'bold' if is_best else 'normal'}; color: {'var(--color-primary)' if is_best else 'var(--color-on-surface)'};">{m['f1']:.3f}</td>
-                <td class="data-mono-md numeric">{m['roc_auc']:.2f}</td>
-            </tr>
-            """, unsafe_allow_html=True)
-        
-        st.markdown("""
-                </tbody>
-            </table>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        # Download button
-        st.markdown("""
-        <div style="text-align: center; padding: 16px;">
-            <button class="mg-btn mg-btn-ghost" style="width: 200px;">
-                <span class="material-symbols-outlined" style="font-size: 14px;">download</span>
-                Export Log Report
-            </button>
-        </div>
-        """, unsafe_allow_html=True)
+
+        split = config.get("data_split", {})
+        setup_rows = pd.DataFrame([
+            {"Setting": "Trained on", "Value": config.get("trained_on", "")},
+            {"Setting": "Train segments", "Value": str(split.get("train_segments", ""))},
+            {"Setting": "Test segments", "Value": str(split.get("test_segments", ""))},
+            {"Setting": "Split strategy", "Value": split.get("split_strategy", "")},
+            {"Setting": "Threshold", "Value": f"{config.get('threshold_value', 0):.4f}"},
+            {"Setting": "Scaler", "Value": config.get("scaler_type", "")},
+        ])
+        st.dataframe(setup_rows, use_container_width=True, hide_index=True)
+
+        report_bytes = json.dumps(build_model_report(), indent=2, default=str).encode("utf-8")
+        st.download_button(
+            "EXPORT LOG REPORT",
+            data=report_bytes,
+            file_name="missionguard_model_report.json",
+            mime="application/json",
+            use_container_width=True,
+        )
+
+    # Feature-group comparison table (native, sortable)
+    st.markdown("<div class='label-caps' style='margin-top: 16px;'>Feature Group Experiments</div>", unsafe_allow_html=True)
+    show_cols = ["feature_group", "n_features", "threshold", "f1", "precision", "recall", "roc_auc", "pr_auc"]
+    st.dataframe(
+        fg[show_cols].sort_values("f1", ascending=False),
+        use_container_width=True,
+        hide_index=True,
+    )
 
 
 def main():
@@ -298,7 +162,7 @@ def main():
         layout="wide",
         initial_sidebar_state="expanded",
     )
-    
+
     render()
 
 
