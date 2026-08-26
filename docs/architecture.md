@@ -77,6 +77,7 @@ The LLM is downstream of the analytical system. It does not determine whether te
 - Incident engine → UI: structured incident objects.
 - Incident engine → LLM: evidence-only JSON/structured prompt.
 - UI → optional API: no separate API in MVP; FastAPI may be introduced later if required.
+- Backend → frontend bridge (`app/data_bridge.py`): `run_pipeline()` loads production artifacts, scores the OPSSAT-AD test split, and returns `{segments, scored, events, incidents, packets, model_info, evaluation_metrics}`; `build_dashboard_view()` shapes that result into page-ready dicts. Pure Python (no Streamlit imports) so the full path is unit-tested in `tests/test_bridge.py`.
 
 ## Evidence contract
 

@@ -11,10 +11,7 @@ import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from src.missionguard.ui.components import (
-    inject_global_styles, panel, kpi_card, badge, metric_row,
-    chart_container, badge as status_badge, disclaimer, page_nav,
-)
+from src.missionguard.ui.components import inject_global_styles, kpi_card
 
 from app.data_bridge import build_dashboard_view, run_pipeline
 
@@ -38,14 +35,7 @@ def render():
         )
         st.stop()
 
-    # Navigation bar (Bug 4 fix: correct page paths with .py extensions)
-    page_nav([
-        {"path": "app/streamlit_app.py", "label": "Overview", "icon": "rocket_launch"},
-        {"path": "app/pages/2_telemetry_explorer.py", "label": "Explorer", "icon": "travel_explore"},
-        {"path": "app/pages/3_incident_center.py", "label": "Incidents", "icon": "warning"},
-        {"path": "app/pages/4_incident_autopsy.py", "label": "Autopsy", "icon": "science"},
-        {"path": "app/pages/5_model_evaluation.py", "label": "Models", "icon": "analytics"},
-    ])
+    # Navigation handled by Streamlit's built-in sidebar (st.navigation)
 
     # Page header
     st.markdown(f"""
@@ -211,7 +201,7 @@ def render():
 
         st.markdown("""
         <div style="text-align: center; padding: 16px;">
-            <button class="mg-btn mg-btn-ghost" style="width: 100%;">VIEW ALL INCIDENTS</button>
+            <a class="mg-btn mg-btn-ghost" href="/incidents" style="display: block; width: 100%; text-align: center; text-decoration: none;">VIEW ALL INCIDENTS</a>
         </div>
         """, unsafe_allow_html=True)
 

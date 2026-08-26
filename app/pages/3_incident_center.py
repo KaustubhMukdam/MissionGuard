@@ -1,193 +1,94 @@
 """
-Incident Center - Incident list and management
+Incident Center - Live incident list from the detection pipeline
 """
 
 import streamlit as st
 import pandas as pd
-import plotly.graph_objects as go
-from datetime import datetime, timedelta
 
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from src.missionguard.ui.components import (
-    inject_global_styles, panel, badge, metric_row, data_table,
-)
+from src.missionguard.ui.components import inject_global_styles, metric_row
+from app.data_bridge import run_pipeline, incidents_table_rows
 
 
-def load_incident_data():
-    """Load incident data for the center."""
-    # Mock data - in production would load from incident engine
-    incidents = [
-        {"incident_id": "INC-9942", "status": "new", "start_time": "14:22:01.099Z", "duration": "00:04:12", "channels": ["PRP-MAIN", "PRP-AUX"], "score": 98, "priority": "critical"},
-        {"incident_id": "INC-9941", "status": "investigating", "start_time": "14:15:44.210Z", "duration": "00:10:29", "channels": ["TEL-COM"], "score": 74, "priority": "high"},
-        {"incident_id": "INC-9938", "status": "reviewed", "start_time": "13:42:11.002Z", "duration": "00:02:15", "channels": ["LFS-O2"], "score": 42, "priority": "watch"},
-        {"incident_id": "INC-9935", "status": "new", "start_time": "12:30:22.100Z", "duration": "00:01:45", "channels": ["CADC0872"], "score": 89, "priority": "critical"},
-        {"incident_id": "INC-9932", "status": "investigating", "start_time": "11:15:33.001Z", "duration": "00:08:22", "channels": ["CADC0874", "CADC0884"], "score": 67, "priority": "high"},
-        {"incident_id": "INC-9929", "status": "reviewed", "start_time": "10:05:12.000Z", "duration": "00:03:30", "channels": ["CADC0892"], "score": 35, "priority": "watch"},
-        {"incident_id": "INC-9925", "status": "reviewed", "start_time": "09:45:00.000Z", "duration": "00:12:00", "channels": ["CADC0888", "CADC0890"], "score": 58, "priority": "high"},
-        {"incident_id": "INC-9921", "status": "reviewed", "start_time": "08:30:00.000Z", "duration": "00:05:00", "channels": ["CADC0873"], "score": 28, "priority": "watch"},
-    ]
-    return incidents
+@st.cache_resource(show_spinner="Running MissionGuard detection pipeline...")
+def load_pipeline():
+    return run_pipeline()
 
 
 def render():
     inject_global_styles()
-    
-    incidents = load_incident_data()
-    
+
+    result = load_pipeline()
+    incidents = result["incidents"]
+    rows = incidents_table_rows(result)
+    metrics_eval = result.get("evaluation_metrics") or {}
+
     # Header
     st.markdown("""
-    <div class="mg-header">
-        <div class="mg-header-title">MissionGuard</div>
-        <div class="mg-header-nav">
-            <a class="mg-header-nav-item">Overview</a>
-            <a class="mg-header-nav-item">Explorer</a>
-            <a class="mg-header-nav-item active">Incidents</a>
-            <a class="mg-header-nav-item">Autopsy</a>
-            <a class="mg-header-nav-item">Models</a>
+    <div style="padding: 16px 24px; border-bottom: 1px solid var(--color-outline-variant);">
+        <h1 style="margin: 0;">Incident Center</h1>
+        <div class="body-md" style="color: var(--color-on-surface-variant); margin-top: 4px;">
+            Incidents aggregated from the OPSSAT-AD test split (priority-ranked)
         </div>
     </div>
     """, unsafe_allow_html=True)
-    
-    # Page header
-    st.markdown("""
-    <div style="padding: 16px 24px; border-bottom: 1px solid var(--color-outline-variant); display: flex; justify-content: space-between; align-items: end;">
-        <div>
-            <h1 style="margin: 0;">Incident Center</h1>
-            <div class="body-md" style="color: var(--color-on-surface-variant); margin-top: 4px;">Active and historical incidents</div>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    # Filters sidebar
+
+    # Sidebar filters (live — no apply button needed)
     with st.sidebar:
-        st.markdown("""
-        <div style="padding: 16px;">
-            <div class="label-caps" style="margin-bottom: 12px;">Filters</div>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        # Status filter
-        st.markdown("<div class='label-caps' style='margin-bottom: 8px;'>Status</div>", unsafe_allow_html=True)
-        status_new = st.checkbox("New", value=True)
-        status_investigating = st.checkbox("Investigating", value=True)
-        status_reviewed = st.checkbox("Reviewed", value=False)
-        
-        # Time range
-        st.markdown("<div class='label-caps' style='margin-top: 16px; margin-bottom: 8px;'>Time Range</div>", unsafe_allow_html=True)
-        time_range = st.selectbox("", ["Last 1 Hour", "Last 24 Hours", "Last 7 Days", "Custom Range..."], label_visibility="collapsed")
-        
-        # Channels
-        st.markdown("<div class='label-caps' style='margin-top: 16px; margin-bottom: 8px;'>Channels</div>", unsafe_allow_html=True)
-        ch_telemetry = st.checkbox("Telemetry (TEL)", value=True)
-        ch_propulsion = st.checkbox("Propulsion (PRP)", value=True)
-        ch_life = st.checkbox("Life Support (LFS)", value=False)
-        
-        st.markdown("""
-        <div style="margin-top: 24px;">
-            <button class="mg-btn mg-btn-ghost" style="width: 100%;">Apply Filters</button>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    # Main content
-    incidents_data = load_incident_data()
-    
-    # Filter incidents based on sidebar
-    status_filter = []
-    if status_new: status_filter.append("new")
-    if status_investigating: status_filter.append("investigating")
-    if status_reviewed: status_filter.append("reviewed")
-    
-    filtered = [inc for inc in incidents if inc["status"] in status_filter]
-    
-    # Metrics row
-    metrics = [
-        {"title": "Active Anomalies", "value": str(len([i for i in filtered if i["status"] != "reviewed"])), "trend": "12", "variant": "error", "icon": "warning"},
-        {"title": "Avg Detection Time", "value": "1.2s", "trend": "1.2s", "variant": "primary", "icon": "speed"},
-        {"title": "System Health", "value": "98.4%", "trend": "98.4%", "variant": "primary", "icon": "health_and_safety"},
+        st.markdown("<div class='label-caps' style='margin: 16px 0 8px;'>Filters</div>", unsafe_allow_html=True)
+        min_score = st.slider("Minimum priority score", 0, 100, 0)
+        channels = sorted({ch for inc in incidents for ch in inc.affected_channels})
+        selected_channels = st.multiselect("Channels", channels, default=channels)
+
+    filtered_rows = [
+        r for r in rows
+        if r["Score"] >= min_score
+        and all(ch in selected_channels for ch in r["Channels"].split(", "))
     ]
-    metric_row(metrics, columns=3)
-    
-    # Incident table
-    st.markdown("""
-    <div class="mg-panel" style="margin-top: 16px;">
-        <div class="mg-panel-header">
-            <div class="mg-panel-title">
-                <span class="label-caps">Incidents</span>
-            </div>
-            <div style="display: flex; gap: 8px; align-items: center;">
-                <span class="data-mono-md" style="color: var(--color-on-surface-variant);">Showing 1-20 of 165</span>
-                <button class="mg-btn mg-btn-ghost mg-btn-sm"><span class="material-symbols-outlined">chevron_left</span></button>
-                <button class="mg-btn mg-btn-ghost mg-btn-sm"><span class="material-symbols-outlined">chevron_right</span></button>
-            </div>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    # Table header and rows (fixed rendering issue)
-    table_html = """
-    <div class="mg-table-container">
-        <table class="mg-table">
-            <thead>
-                <tr>
-                    <th class="label-caps" style="width: 80px;">Status</th>
-                    <th class="label-caps" style="width: 120px;">Incident ID</th>
-                    <th class="label-caps" style="width: 140px; text-align: right;">Start Time</th>
-                    <th class="label-caps" style="width: 100px; text-align: right;">Duration</th>
-                    <th class="label-caps">Channels</th>
-                    <th class="label-caps" style="width: 80px; text-align: right;">Score</th>
-                    <th class="label-caps" style="width: 50px; text-align: center;">Act</th>
-                </tr>
-            </thead>
-            <tbody>
-    """
-    
-    for inc in filtered:
-        status_class = "new" if inc["status"] == "new" else "investigating" if inc["status"] == "investigating" else "reviewed"
-        status_colors = {
-            "new": ("error", "var(--color-error)"),
-            "investigating": ("warning", "var(--color-tertiary)"),
-            "reviewed": ("nominal", "var(--color-on-surface-variant)"),
-        }
-        variant, _ = status_colors.get(inc["status"], ("nominal", "var(--color-on-surface-variant)"))
-        
-        table_html += f"""
-        <tr style="cursor: pointer;">
-            <td>
-                <span class="mg-badge {variant}">
-                    <span class="dot" style="background: var(--color-{'error' if variant=='error' else 'tertiary' if variant=='warning' else 'on-surface-variant'});{' animation: mg-pulse 1.5s infinite;' if variant=='error' else ''}"></span>
-                    {inc["status"].capitalize()}
-                </span>
-            </td>
-            <td class="data-mono-md" style="color: {'var(--color-error)' if variant=='error' else 'var(--color-tertiary)' if variant=='warning' else 'var(--color-on-surface-variant)'};">{inc['incident_id']}</td>
-            <td class="data-mono-md" style="text-align: right;">{inc['start_time']}</td>
-            <td class="data-mono-md" style="text-align: right;">{inc['duration']}</td>
-            <td>{' '.join([f'<span class="mg-badge nominal">{ch}</span>' for ch in inc["channels"]])}</td>
-            <td class="data-mono-md" style="text-align: right; color: {'var(--color-error)' if inc['score'] > 90 else 'var(--color-tertiary)' if inc['score'] > 70 else 'var(--color-on-surface-variant)'}; font-weight: {'bold' if inc['score'] > 70 else 'normal'};">{inc['score']}</td>
-            <td style="text-align: center;"><span class="material-symbols-outlined" style="color: var(--color-primary); cursor: pointer;">open_in_new</span></td>
-        </tr>
-        """
-    
-    table_html += """
-            </tbody>
-        </table>
-    </div>
-    """
-    
-    st.markdown(table_html, unsafe_allow_html=True)
-    
-    # Pagination
-    st.markdown("""
-    <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 16px; border-top: 1px solid var(--color-outline-variant);">
-        <span class="label-caps" style="color: var(--color-on-surface-variant);">Showing 1-20 of 165</span>
-        <div class="mg-flex mg-gap-xs">
-            <button class="mg-btn mg-btn-ghost mg-btn-sm" disabled><span class="material-symbols-outlined">chevron_left</span></button>
-            <button class="mg-btn mg-btn-ghost mg-btn-sm"><span class="material-symbols-outlined">chevron_right</span></button>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
+
+    # Metrics row (real values)
+    f1 = metrics_eval.get("f1")
+    top_score = rows[0]["Score"] if rows else 0
+    metric_row([
+        {"title": "Active Incidents", "value": str(len(filtered_rows)), "trend": f"{len(rows)} total", "variant": "error" if rows else "nominal", "icon": "warning"},
+        {"title": "Top Priority Score", "value": str(top_score), "trend": "ranked #1", "variant": "warning", "icon": "speed"},
+        {"title": "Model F1", "value": f"{f1:.3f}" if f1 is not None else "N/A", "trend": result["model_info"]["name"] or "", "variant": "primary", "icon": "analytics"},
+    ], columns=3)
+
+    if not filtered_rows:
+        st.info("No incidents match the current filters.")
+        st.stop()
+
+    # Native table (sortable, hoverable — replaces fragile hand-built HTML table)
+    df = pd.DataFrame(filtered_rows)
+    st.dataframe(
+        df,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "Score": st.column_config.ProgressColumn(
+                "Score", min_value=0, max_value=100, format="%d",
+            ),
+        },
+    )
+
+    # Deep-link into Autopsy
+    st.markdown("<div class='label-caps' style='margin-top: 16px;'>Open Incident Autopsy</div>", unsafe_allow_html=True)
+    selected_id = st.selectbox(
+        "Incident",
+        [r["Incident ID"] for r in filtered_rows],
+        label_visibility="collapsed",
+    )
+    if st.query_params.get("id") != selected_id:
+        st.query_params["id"] = selected_id
+    st.markdown(
+        f"<a class='mg-btn mg-btn-primary' href='/autopsy?id={selected_id}' "
+        f"style='text-decoration: none;'>OPEN {selected_id} IN AUTOPSY</a>",
+        unsafe_allow_html=True,
+    )
 
 
 def main():
@@ -197,7 +98,7 @@ def main():
         layout="wide",
         initial_sidebar_state="expanded",
     )
-    
+
     render()
 
 

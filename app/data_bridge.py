@@ -11,10 +11,12 @@ Pure Python (no Streamlit imports) so it is unit-testable in isolation.
 
 import json
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import numpy as np
+import pandas as pd
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
@@ -178,8 +180,6 @@ def run_pipeline(
 MAX_TREND_POINTS = 600
 MAX_LOG_ENTRIES = 6
 MAX_INCIDENT_CARDS = 5
-
-# Score thresholds for log severity badges (matches priority label bands)
 _SEVERITY_BANDS = [
     (0.75, "error"),
     (0.5, "warning"),
@@ -302,3 +302,145 @@ def build_dashboard_view(result: Dict[str, Any]) -> Dict[str, Any]:
         "anomaly_log": anomaly_log,
         "incidents": incident_cards,
     }
+
+
+def telemetry_slice(
+    scored: "pd.DataFrame",
+    start: int,
+    end: int,
+    threshold: Optional[float],
+) -> Dict[str, Any]:
+    """
+    Slice scored segments for the Telemetry Explorer chart.
+
+    Returns aligned lists (timestamps, values, scores) plus anomaly positions
+    (indices into the slice where score >= threshold).
+    """
+    empty = {"timestamps": [], "values": [], "scores": [], "anomaly_positions": []}
+    if scored is None or scored.empty:
+        return empty
+    sl = scored.iloc[start:end]
+    if sl.empty:
+        return empty
+    positions = set()
+    if threshold is not None:
+        positions = set(sl.index[sl["anomaly_score"] >= threshold] - sl.index[0])
+    return {
+        "timestamps": list(sl["timestamp"]),
+        "values": [float(v) for v in sl["value"]],
+        "scores": [float(s) for s in sl["anomaly_score"]],
+        "anomaly_positions": sorted(int(p) for p in positions),
+    }
+
+
+def incidents_table_rows(result: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Map ranked incidents to rows for the Incident Center table (st.dataframe)."""
+    return [
+        {
+            "Priority": get_priority_label(inc.priority_score),
+            "Incident ID": inc.incident_id,
+            "Start": inc.start_time.strftime("%H:%M:%S"),
+            "Duration": _format_duration(inc.duration_seconds),
+            "Channels": ", ".join(inc.affected_channels),
+            "Score": int(round(inc.priority_score * 100)),
+        }
+        for inc in result["incidents"]
+    ]
+
+
+def event_window_series(result: Dict[str, Any], packet: EvidencePacket) -> Dict[str, Any]:
+    """
+    Extract raw telemetry within an incident's time window for the Autopsy chart.
+
+    Returns {timestamps, values, event_start} — event_start marks the first
+    anomalous sample position inside the window.
+    """
+    segments = result["segments"]
+    channel = packet.affected_channels[0] if packet.affected_channels else None
+    start = pd.Timestamp(packet.start_time)
+    end = pd.Timestamp(packet.end_time)
+
+    window = segments[
+        (segments["channel"] == channel)
+        & (segments["timestamp"] >= start)
+        & (segments["timestamp"] <= end)
+    ].sort_values("timestamp")
+
+    if window.empty:
+        return {"timestamps": [], "values": [], "event_start": None}
+
+    first_event = min(
+        (pd.Timestamp(e["start_time"]) for e in packet.anomaly_events if e.get("start_time")),
+        default=None,
+    )
+    event_start = None
+    if first_event is not None:
+        matches = window.index[window["timestamp"] >= first_event]
+        if len(matches):
+            event_start = int(window.index.get_loc(matches[0]))
+
+    return {
+        "timestamps": list(window["timestamp"]),
+        "values": [float(v) for v in window["value"]],
+        "event_start": event_start,
+    }
+
+
+def briefing_from_packet(packet: EvidencePacket) -> Dict[str, Any]:
+    """
+    Deterministic operator briefing built ONLY from evidence-packet fields.
+
+    This is the no-LLM fallback required by the architecture doc: every sentence
+    traces to structured evidence. The Granite layer will replace/augment this.
+    """
+    channels = ", ".join(packet.affected_channels) or "unknown channel"
+    threshold_txt = (
+        f"{packet.threshold_used:.3f}" if packet.threshold_used else "the deployed threshold"
+    )
+    summary = (
+        f"{packet.event_count} anomaly event(s) detected on {channels} between "
+        f"{packet.start_time[11:19]}Z and {packet.end_time[11:19]}Z "
+        f"(duration {packet.duration_seconds:.0f}s)."
+    )
+    why_flagged = (
+        f"Model '{packet.model_name}' scored up to {packet.max_anomaly_score:.2f}, "
+        f"exceeding deployed threshold {threshold_txt}."
+    )
+    top_segment = ""
+    if packet.anomaly_events and packet.anomaly_events[0].get("segment_ids"):
+        ids = packet.anomaly_events[0]["segment_ids"]
+        top_segment = f" (segments {','.join(str(i) for i in ids[:3])})"
+    suggestions = [
+        f"Inspect raw telemetry for {channels}{top_segment} around the event window.",
+        f"Compare affected channel statistics against nominal baseline "
+        f"(max score {packet.max_anomaly_score:.2f}, mean {packet.mean_anomaly_score:.2f}).",
+        f"Check for recurring events on the same channels; priority score was "
+        f"{packet.priority_score:.2f} ({packet.priority_label}).",
+    ]
+    return {
+        "summary": summary,
+        "why_flagged": why_flagged,
+        "suggestions": suggestions,
+    }
+
+
+def build_model_report(
+    models_dir: Optional[Path] = None,
+    metrics_path: Optional[Path] = None,
+) -> Dict[str, Any]:
+    """Assemble a JSON-serializable model report from production artifacts."""
+    models_dir = Path(models_dir) if models_dir else DEFAULT_MODELS_DIR
+    resolved_metrics = Path(metrics_path) if metrics_path else DEFAULT_METRICS_PATH
+
+    config = json.loads((models_dir / "prod_config_v1.json").read_text())
+    report = {
+        "generated_at": datetime.now().isoformat(),
+        "model_config": config,
+        "evaluation_metrics": load_evaluation_metrics(resolved_metrics),
+    }
+    feature_groups = models_dir.parent / "artifacts" / "phase3b" / "experiment_feature_groups.csv"
+    if feature_groups.exists():
+        import csv as _csv
+        with open(feature_groups) as f:
+            report["feature_group_experiments"] = list(_csv.DictReader(f))
+    return report
